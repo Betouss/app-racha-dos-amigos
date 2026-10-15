@@ -1,0 +1,52 @@
+rules_version = '2';
+
+// Grupo: quem cria é administrador; quem entra pelo convite só visualiza.
+// Só administradores gravam jogadores, rachas, times, partidas e gols.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function logado() {
+      return request.auth != null;
+    }
+    function grupo(gid) {
+      return get(/databases/$(database)/documents/grupos/$(gid)).data;
+    }
+    function membro(gid) {
+      return logado() && request.auth.uid in grupo(gid).membros;
+    }
+    function admin(gid) {
+      return logado() && request.auth.uid in grupo(gid).admins;
+    }
+
+    // Grupo atual de cada usuário
+    match /usuarios/{uid} {
+      allow read, write: if logado() && request.auth.uid == uid;
+    }
+
+    match /grupos/{gid} {
+      // Qualquer usuário logado com o link (o id é aleatório) vê nome e participantes para aceitar o convite
+      allow get: if logado();
+      allow list: if false;
+
+      allow create: if logado()
+        && request.resource.data.admins == [request.auth.uid]
+        && request.resource.data.membros == [request.auth.uid];
+
+      // Administrador altera nome, participantes e administradores, mas não pode deixar o grupo sem admin
+      allow update: if admin(gid) && request.resource.data.admins.size() > 0
+        // Convite: o próprio usuário só pode se adicionar aos membros e gravar o próprio perfil
+        || (logado()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['membros', 'perfis'])
+          && request.resource.data.membros.removeAll(resource.data.membros) == [request.auth.uid]
+          && resource.data.membros.removeAll(request.resource.data.membros).size() == 0
+          && request.resource.data.perfis.diff(resource.data.perfis).affectedKeys().hasOnly([request.auth.uid]));
+
+      allow delete: if false;
+
+      match /{colecao}/{id} {
+        allow read: if membro(gid);
+        allow write: if admin(gid)
+          && colecao in ['jogadores', 'rachas', 'presencas', 'times', 'timeJogadores', 'partidas', 'gols'];
+      }
+    }
+  }
+}
