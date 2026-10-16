@@ -45,7 +45,7 @@ export default function Convite() {
         <>
           <h1>{grupo.nome}</h1>
           <p className="sub">
-            {grupo.membros.length} participante{grupo.membros.length === 1 ? '' : 's'}. Você vai acompanhar os rachas, o placar ao vivo e os rankings. Só o
+            {grupo.membros.length} participante{grupo.membros.length === 1 ? '' : 's'}. Você vai acompanhar as peladas, o placar ao vivo e os rankings. Só o
             administrador edita.
           </p>
           {grupoId && <p className="aviso">Você vai sair do grupo atual neste aparelho e passar a ver este.</p>}

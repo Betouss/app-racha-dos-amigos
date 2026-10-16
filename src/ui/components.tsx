@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { corDoTime } from '../data/cores'
 import type { Jogador, Time } from '../domain/types'
@@ -118,7 +118,7 @@ export function Stepper({
 
 const ABAS: { to: string; label: string; icon: IconName }[] = [
   { to: '/', label: 'Início', icon: 'home' },
-  { to: '/racha', label: 'Racha', icon: 'campo' },
+  { to: '/racha', label: 'Pelada', icon: 'campo' },
   { to: '/jogadores', label: 'Jogadores', icon: 'users' },
   { to: '/rankings', label: 'Rankings', icon: 'podio' },
 ]
@@ -138,8 +138,23 @@ export function BottomNav() {
 
 /** Barra fixa com a ação principal da tela, acima da navegação. */
 export function Dock({ children, nav = true }: { children?: ReactNode; nav?: boolean }) {
+  // Publica a altura real da barra para a página reservar espaço e o último item não ficar escondido
+  const ref = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const raiz = document.documentElement
+    const medir = () => raiz.style.setProperty('--dock-h', `${el.offsetHeight}px`)
+    medir()
+    const ro = new ResizeObserver(medir)
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      raiz.style.removeProperty('--dock-h')
+    }
+  }, [])
   return (
-    <div className={`dock${nav ? '' : ' dock--solo'}`}>
+    <div ref={ref} className={`dock${nav ? '' : ' dock--solo'}`}>
       {children && <div className="dock__acao">{children}</div>}
       {nav && <BottomNav />}
     </div>
@@ -167,6 +182,56 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
           </div>
         )}
         {children}
+      </div>
+    </div>
+  )
+}
+
+/** Modal de confirmação centralizado, no lugar do confirm() do navegador. */
+export function Confirmar({
+  aberto,
+  titulo,
+  children,
+  icone = 'bandeira',
+  confirmar,
+  cancelar = 'Voltar',
+  perigo = false,
+  onConfirmar,
+  onFechar,
+}: {
+  aberto: boolean
+  titulo: ReactNode
+  children?: ReactNode
+  icone?: IconName
+  confirmar: ReactNode
+  cancelar?: string
+  perigo?: boolean
+  onConfirmar: () => void
+  onFechar: () => void
+}) {
+  useEffect(() => {
+    if (!aberto) return
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onFechar()
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [aberto, onFechar])
+  if (!aberto) return null
+  return (
+    <div className="modal-backdrop" onClick={onFechar}>
+      <div className={`modal${perigo ? ' modal--perigo' : ''}`} role="alertdialog" aria-modal="true" aria-labelledby="modal-titulo" onClick={(e) => e.stopPropagation()}>
+        <span className="modal__icone">
+          <Icon name={icone} size={30} />
+        </span>
+        <h2 id="modal-titulo">{titulo}</h2>
+        {children && <div className="modal__texto">{children}</div>}
+        <div className="modal__acoes">
+          <button className="btn btn--ghost" onClick={onFechar} autoFocus>
+            {cancelar}
+          </button>
+          <button className={`btn${perigo ? ' btn--perigo' : ''}`} onClick={onConfirmar}>
+            {confirmar}
+          </button>
+        </div>
       </div>
     </div>
   )

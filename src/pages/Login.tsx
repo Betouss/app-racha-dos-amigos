@@ -77,10 +77,10 @@ export default function Login() {
       <div className="pitch">
         <div className="pitch__eyebrow">{convite ? 'Você foi convidado' : 'Bem-vindo'}</div>
         <div className="pitch__titulo" style={{ fontSize: 44 }}>
-          Racha
+          PeladaFC
         </div>
         <p style={{ margin: '4px 0 0', lineHeight: 1.4 }}>
-          {convite ? 'Entre para acompanhar os rachas do grupo.' : 'Times equilibrados, placar ao vivo e o histórico da pelada.'}
+          {convite ? 'Entre para acompanhar as peladas do grupo.' : 'Times equilibrados, placar ao vivo e o histórico da pelada.'}
         </p>
       </div>
 

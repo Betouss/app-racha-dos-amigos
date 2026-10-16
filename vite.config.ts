@@ -9,8 +9,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon-180x180.png'],
       manifest: {
-        name: 'Racha',
-        short_name: 'Racha',
+        name: 'PeladaFC',
+        short_name: 'PeladaFC',
         description: 'Sorteio de times, placar e estatísticas da pelada.',
         lang: 'pt-BR',
         start_url: '/',

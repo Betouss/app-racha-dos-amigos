@@ -17,7 +17,7 @@ const ABAS: { id: Aba; label: string; valor: (s: StatsJogador) => number; format
     formato: (v) => `${Math.round(v * 100)}%`,
     sub: (s) => `${s.v}V ${s.e}E ${s.d}D`,
   },
-  { id: 'titulos', label: 'Títulos', valor: (s) => s.titulos, sub: (s) => `${s.rachas} rachas` },
+  { id: 'titulos', label: 'Títulos', valor: (s) => s.titulos, sub: (s) => `${s.rachas} peladas` },
 ]
 
 /** Mínimo de partidas para entrar no ranking de aproveitamento. */
@@ -46,7 +46,7 @@ export default function Rankings() {
     <>
       <main className="page page--sem-acao">
         <p className="eyebrow">
-          {periodo === 'tudo' ? 'Desde o início' : `Temporada ${periodo}`} · {rachasNoPeriodo} racha{rachasNoPeriodo === 1 ? '' : 's'}
+          {periodo === 'tudo' ? 'Desde o início' : `Temporada ${periodo}`} · {rachasNoPeriodo} pelada{rachasNoPeriodo === 1 ? '' : 's'}
         </p>
         <h1>Rankings</h1>
         <div className="abas" role="tablist">
@@ -59,7 +59,7 @@ export default function Rankings() {
         <PeriodoFiltro rachas={base.rachas} value={periodo} onChange={setPeriodo} />
 
         {stats.length === 0 ? (
-          <Vazio titulo="Sem dados neste período">Os rankings aparecem depois do primeiro racha encerrado.</Vazio>
+          <Vazio titulo="Sem dados neste período">Os rankings aparecem depois do primeira pelada encerrada.</Vazio>
         ) : (
           <>
             <div className="podio">

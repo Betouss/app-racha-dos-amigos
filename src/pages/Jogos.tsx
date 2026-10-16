@@ -1,10 +1,12 @@
+import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { adicionarRodada, encerrarRacha, iniciarPartida } from '../data/acoes'
 import { useAdmin, useCtx, useRacha } from '../data/store'
 import type { Id } from '../domain/types'
 import { somaEstrelas } from '../domain/sorteio'
 import { placar } from '../domain/stats'
-import { compartilharTexto, Dock, TeamDot, TeamName } from '../ui/components'
+import { vencedorFica } from '../domain/vencedorFica'
+import { compartilharTexto, Confirmar, Dock, TeamDot, TeamName } from '../ui/components'
 import { diaCurto } from '../ui/datas'
 import { Icon } from '../ui/Icon'
 
@@ -15,8 +17,9 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
   const ctx = useCtx()
   const admin = useAdmin()
   const nav = useNavigate()
+  const [confirmando, setConfirmando] = useState(false)
   if (dados === undefined) return null
-  if (dados === null) return <main className="page">Racha não encontrado.</main>
+  if (dados === null) return <main className="page">Pelada não encontrada.</main>
   const { racha, times, partidas, gols, timeJogadores, jogadores } = dados
   // Logo após confirmar os times o status pode ainda não ter chegado do cache: não redireciona
   if (racha.status === 'aberto' && partidas.length === 0)
@@ -43,15 +46,31 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
     return s + pl.a + pl.b
   }, 0)
   const encerrado = racha.status === 'encerrado'
+  const ehVencedorFica = racha.formato === 'vencedor_fica'
+  // Fila de quem está de fora (quem ganha fica), a partir dos resultados até aqui
+  const fila = (() => {
+    if (!ehVencedorFica) return []
+    const indice = new Map(times.map((t, i) => [t.id, i]))
+    const jogos = [...jogadas, ...(aoVivo ? [aoVivo] : [])].map((p) => {
+      const pl = placar(p, gols)
+      const a = indice.get(p.timeAId)!
+      const b = indice.get(p.timeBId)!
+      return { a, b, vencedor: pl.a > pl.b ? a : pl.b > pl.a ? b : null }
+    })
+    // Com partida ao vivo, a fila mostrada é a de agora (sem contar o resultado parcial)
+    return vencedorFica(times.length, aoVivo ? jogos.slice(0, -1) : jogos).fila.map((i) => times[i])
+  })()
 
   const abrir = (partidaId: Id) => {
     if (admin) iniciarPartida(ctx, partidaId)
     nav(`/racha/${rachaId}/partida/${partidaId}`)
   }
 
+  // No quem ganha fica a próxima partida é só a sequência natural: não conta como descartada
+  const naoJogadas = ehVencedorFica ? 0 : partidas.filter((p) => p.status === 'agendada').length
+  const plural = naoJogadas > 1 ? 's' : ''
   const encerrar = () => {
-    const faltam = partidas.filter((p) => p.status !== 'encerrada').length
-    if (faltam > 0 && !confirm(`Encerrar o racha agora? ${faltam} partida${faltam > 1 ? 's' : ''} não jogada${faltam > 1 ? 's' : ''} será${faltam > 1 ? 'ão' : ''} descartada${faltam > 1 ? 's' : ''}.`)) return
+    setConfirmando(false)
     encerrarRacha(ctx, rachaId)
     nav(`/racha/${rachaId}/classificacao`)
   }
@@ -68,7 +87,7 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
       return `*${t.nome}* (${soma}★)\n🧤 ${gk ? jogadores.get(gk.jogadorId)?.apelido : '—'}\n${nomes}`
     })
     const ordem = partidas.map((p) => `${p.ordem}. ${timePorId.get(p.timeAId)?.nome} × ${timePorId.get(p.timeBId)?.nome}`)
-    compartilharTexto(`⚽ Racha ${diaCurto(racha.data)} — ${racha.local}\n\n${linhas.join('\n\n')}\n\n*Jogos*\n${ordem.join('\n')}`)
+    compartilharTexto(`⚽ Pelada ${diaCurto(racha.data)} — ${racha.local}\n\n${linhas.join('\n\n')}\n\n*Jogos*\n${ordem.join('\n')}`)
   }
 
   return (
@@ -84,7 +103,8 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
           </button>
         </div>
         <p className="sub">
-          {diaCurto(racha.data)} · {times.length} times · {partidas.length} partidas
+          {diaCurto(racha.data)} · {times.length} times · {ehVencedorFica ? 'quem ganha fica' : `${partidas.length} partidas`}
+          {racha.golsParaVencer ? ` · ${racha.golsParaVencer} gol${racha.golsParaVencer > 1 ? 's' : ''} ou ${racha.duracaoPartidaMin} min` : ''}
         </p>
 
         {proxima && !encerrado && (
@@ -94,18 +114,27 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
             onClick={() => (admin || aoVivo ? abrir(proxima.id) : undefined)}
           >
             <div className="pitch__eyebrow">
-              {aoVivo ? 'Ao vivo' : 'Próxima'} · Partida {proxima.ordem} de {partidas.length}
+              {aoVivo ? 'Ao vivo' : 'Próxima'} · Partida {proxima.ordem}
+              {ehVencedorFica ? '' : ` de ${partidas.length}`}
             </div>
             <div className="confronto">
               <TeamDot cor={timePorId.get(proxima.timeAId)!.cor} size={22} /> {timePorId.get(proxima.timeAId)?.nome}
               <span style={{ opacity: 0.8 }}>×</span>
               <TeamDot cor={timePorId.get(proxima.timeBId)!.cor} size={22} /> {timePorId.get(proxima.timeBId)?.nome}
             </div>
-            <div className="progresso">
-              {partidas.map((p) => (
-                <span key={p.id} className={p.status === 'encerrada' ? 'feita' : p.id === proxima.id ? 'atual' : ''} />
-              ))}
-            </div>
+            {ehVencedorFica ? (
+              fila.length > 0 && (
+                <div style={{ fontSize: 14, margin: '10px 0 4px' }}>
+                  De fora: {fila.map((t) => t.nome).join(' → ')}
+                </div>
+              )
+            ) : (
+              <div className="progresso">
+                {partidas.map((p) => (
+                  <span key={p.id} className={p.status === 'encerrada' ? 'feita' : p.id === proxima.id ? 'atual' : ''} />
+                ))}
+              </div>
+            )}
             <div style={{ fontSize: 14 }}>
               {jogadas.length} jogada{jogadas.length === 1 ? '' : 's'} · {golsAteAgora} gol{golsAteAgora === 1 ? '' : 's'} até agora
             </div>
@@ -140,18 +169,22 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
             })}
           </ul>
 
-          <div className="acoes">
-            {admin && !encerrado && (
-              <button className="btn btn--ghost" onClick={() => adicionarRodada(ctx, rachaId)}>
-                <Icon name="mais" /> Mais uma rodada
-              </button>
-            )}
-            <button className="btn btn--ghost" onClick={() => nav(`/racha/${rachaId}/classificacao`)}>
+          {admin && !encerrado && !ehVencedorFica && (
+            <button className="btn btn--ghost" style={{ marginTop: 16 }} onClick={() => adicionarRodada(ctx, rachaId)}>
+              <Icon name="mais" /> Mais uma rodada
+            </button>
+          )}
+        </section>
+
+        <section className="secao">
+          <h2>Mais opções</h2>
+          <div className={`acoes${encerrado ? '' : ' acoes--2'}`} style={{ marginTop: 0 }}>
+            <button className="btn btn--ghost" style={{ fontSize: 15 }} onClick={() => nav(`/racha/${rachaId}/classificacao`)}>
               <Icon name="podio" /> Classificação
             </button>
-            {!encerrado && !jogadas.length && !aoVivo && (
-              <button className="btn btn--ghost" onClick={() => nav(`/racha/${rachaId}/sorteio`)}>
-                <Icon name="users" /> Ver times
+            {!encerrado && (
+              <button className="btn btn--ghost" style={{ fontSize: 15 }} onClick={() => nav(`/racha/${rachaId}/sorteio`)}>
+                <Icon name="users" /> {admin && (jogadas.length || aoVivo) ? 'Alterar times' : 'Ver times'}
               </button>
             )}
           </div>
@@ -170,7 +203,7 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
           ) : null
         ) : proxima ? (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: 10 }}>
-            <button className="btn btn--outline" style={{ fontSize: 16 }} onClick={encerrar}>
+            <button className="btn btn--outline" style={{ fontSize: 16 }} onClick={() => setConfirmando(true)}>
               <Icon name="bandeira" /> Encerrar
             </button>
             <button className="btn" style={{ fontSize: 19, gap: 8 }} onClick={() => abrir(proxima.id)}>
@@ -178,11 +211,33 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
             </button>
           </div>
         ) : (
-          <button className="btn" onClick={encerrar}>
-            <Icon name="trofeu" /> Encerrar racha
+          <button className="btn" onClick={() => setConfirmando(true)}>
+            <Icon name="trofeu" /> Encerrar pelada
           </button>
         )}
       </Dock>
+
+      <Confirmar
+        aberto={confirmando}
+        titulo="Encerrar a pelada agora?"
+        icone={naoJogadas > 0 ? 'bandeira' : 'trofeu'}
+        perigo={naoJogadas > 0}
+        confirmar={<><Icon name="bandeira" /> Encerrar</>}
+        onConfirmar={encerrar}
+        onFechar={() => setConfirmando(false)}
+      >
+        {naoJogadas > 0 ? (
+          <>
+            <strong>
+              {naoJogadas} partida{plural} não jogada{plural}
+            </strong>{' '}
+            ser{naoJogadas > 1 ? 'ão' : 'á'} descartada{plural}.
+          </>
+        ) : (
+          'Todas as partidas foram jogadas. A classificação final será fechada.'
+        )}
+        {aoVivo && <> A partida {aoVivo.ordem}, que está ao vivo, termina com o placar atual.</>}
+      </Confirmar>
     </>
   )
 }

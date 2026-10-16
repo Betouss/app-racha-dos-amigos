@@ -26,7 +26,7 @@
   --display: 'Archivo Variable', 'Arial Black', system-ui, sans-serif;
   --body: 'Nunito Sans Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --radius: 16px;
-  --dock-acao: 96px; /* altura real da barra de ação: 18 + 64 + 12, arredondada */
+  --dock-acao: 90px; /* altura da barra de ação: 12 + 64 + 12, arredondada (fallback do --dock-h medido) */
   --nav: 72px;
   --safe-b: env(safe-area-inset-bottom, 0px);
   color-scheme: light;
@@ -129,14 +129,15 @@ h2 {
   min-height: 100dvh;
   position: relative;
 }
+/* --dock-h é a altura medida da barra fixa (ver Dock); os valores fixos são só o fallback */
 .page {
-  padding: 20px 16px calc(var(--nav) + var(--dock-acao) + var(--safe-b) + 28px);
+  padding: 20px 16px calc(var(--dock-h, calc(var(--nav) + var(--dock-acao) + var(--safe-b))) + 32px);
 }
 .page--sem-acao {
-  padding-bottom: calc(var(--nav) + var(--safe-b) + 24px);
+  padding-bottom: calc(var(--dock-h, calc(var(--nav) + var(--safe-b))) + 24px);
 }
 .page--solo {
-  padding: 16px 16px calc(var(--dock-acao) + var(--safe-b) + 28px);
+  padding: 16px 16px calc(var(--dock-h, calc(var(--dock-acao) + var(--safe-b))) + 32px);
 }
 
 .eyebrow {
@@ -303,9 +304,13 @@ h2 {
 .dock > * {
   pointer-events: auto;
 }
+/* Sem fundo: só os botões flutuam; a página reserva o espaço (--dock-h) para o fim da lista ficar visível */
 .dock__acao {
-  padding: 18px 16px 12px;
-  background: linear-gradient(to bottom, transparent, var(--bg) 22%);
+  padding: 12px 16px;
+}
+.dock__acao .btn {
+  line-height: 1.1;
+  text-align: center;
 }
 .dock--solo .dock__acao {
   padding-bottom: calc(16px + var(--safe-b));
@@ -710,6 +715,11 @@ h2 {
   font-weight: 700;
   font-size: 22px;
   color: var(--muted);
+}
+.segmented--texto .segmented button {
+  font-size: 15px;
+  line-height: 1.15;
+  padding: 4px 6px;
 }
 .segmented button.on {
   background: var(--accent);
@@ -1245,6 +1255,321 @@ h2 {
   align-items: center;
   gap: 10px;
 }
+/* Suspense do sorteio */
+.sorteando {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  background: var(--pitch);
+  color: var(--on-pitch);
+  text-align: center;
+  overflow: hidden;
+  animation: fade 0.25s;
+}
+/* Linhas do campo: círculo central e linha do meio */
+.sorteando__campo {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 50%, transparent 118px, var(--pitch-line) 119px, var(--pitch-line) 122px, transparent 123px),
+    linear-gradient(to bottom, transparent calc(50% - 1.5px), var(--pitch-line) calc(50% - 1.5px), var(--pitch-line) calc(50% + 1.5px), transparent calc(50% + 1.5px));
+  animation: respirar 2.4s ease-in-out infinite;
+}
+.sorteando > :not(.sorteando__campo) {
+  position: relative;
+}
+.sorteando__bola {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  animation: quicar 0.7s cubic-bezier(0.5, 0, 0.5, 1) infinite alternate;
+}
+.sorteando__bola svg {
+  animation: girar 1s linear infinite;
+}
+.sorteando__titulo {
+  margin: 8px 0 0;
+  font-size: 30px;
+  color: inherit;
+}
+.sorteando__pontos i {
+  font-style: normal;
+  animation: piscar 1.2s infinite;
+}
+.sorteando__pontos i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.sorteando__pontos i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+.sorteando__roleta {
+  height: 44px;
+  min-width: 220px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  display: grid;
+  place-items: center;
+  padding: 0 16px;
+}
+.sorteando__roleta span {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 22px;
+  white-space: nowrap;
+  animation: rolar 0.12s ease-out;
+}
+.sorteando__cores {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+.sorteando__cores span {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  animation: pulsar 0.9s ease-in-out infinite;
+}
+.sorteando__fase {
+  margin: 4px 0 0;
+  font-size: 15px;
+  opacity: 0.85;
+  animation: fade 0.3s;
+}
+/* Revelação dos times depois do sorteio */
+.times--revela .time-card {
+  animation: revelar 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.25) both;
+}
+.times--revela .time-card:nth-child(2) {
+  animation-delay: 0.12s;
+}
+.times--revela .time-card:nth-child(3) {
+  animation-delay: 0.24s;
+}
+.times--revela .time-card:nth-child(4) {
+  animation-delay: 0.36s;
+}
+.times--revela .time-card:nth-child(n + 5) {
+  animation-delay: 0.48s;
+}
+.times--revela .slot {
+  animation: entrar 0.3s ease-out both;
+  animation-delay: 0.35s;
+}
+@keyframes quicar {
+  from {
+    transform: translateY(-14px);
+  }
+  to {
+    transform: translateY(10px) scaleY(0.94);
+  }
+}
+@keyframes girar {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes piscar {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes rolar {
+  from {
+    transform: translateY(-70%);
+    opacity: 0;
+  }
+}
+@keyframes pulsar {
+  50% {
+    transform: scale(1.35);
+  }
+}
+@keyframes respirar {
+  50% {
+    transform: scale(1.06);
+  }
+}
+@keyframes revelar {
+  from {
+    transform: scale(0.85) translateY(16px);
+    opacity: 0;
+  }
+}
+@keyframes entrar {
+  from {
+    transform: translateX(-8px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sorteando *,
+  .sorteando__campo,
+  .times--revela .time-card,
+  .times--revela .slot {
+    animation: none !important;
+  }
+}
+
+/* Modal de confirmação */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: rgba(10, 14, 12, 0.55);
+  backdrop-filter: blur(3px);
+  animation: fade 0.15s;
+}
+.modal {
+  width: 100%;
+  max-width: 380px;
+  background: var(--bg);
+  border-radius: 24px;
+  padding: 28px 20px 20px;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
+  animation: surgir 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.modal__icone {
+  display: inline-grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--pitch);
+  color: var(--on-pitch);
+  margin-bottom: 14px;
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--pitch) 18%, transparent);
+}
+.modal--perigo .modal__icone {
+  background: var(--loss);
+  color: #fff;
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--loss) 18%, transparent);
+}
+.modal h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.15;
+}
+.modal__texto {
+  color: var(--muted);
+  line-height: 1.45;
+  margin-top: 10px;
+}
+.modal__texto strong {
+  color: var(--text);
+}
+.modal__acoes {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 10px;
+  margin-top: 24px;
+}
+.modal__acoes .btn {
+  min-height: 52px;
+  font-size: 17px;
+}
+.btn--perigo {
+  background: var(--loss);
+  color: #fff;
+}
+.modal__destaque {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 18px;
+}
+@keyframes surgir {
+  from {
+    transform: scale(0.9) translateY(12px);
+    opacity: 0;
+  }
+}
+
+/* Goleiros na partida */
+.goleiros {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+}
+.goleiro {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 2px solid var(--divider);
+  background: var(--surface);
+  color: inherit;
+  text-align: left;
+  min-width: 0;
+}
+.goleiro:disabled {
+  opacity: 1;
+}
+.goleiro__time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 700;
+  max-width: 100%;
+}
+.goleiro__nome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  font-size: 16px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.goleiro__sofridos {
+  font-size: 13px;
+  color: var(--muted);
+}
+.goleiro__sofridos b {
+  font-family: var(--display);
+  font-size: 20px;
+  color: var(--loss);
+  margin-right: 2px;
+}
+.goleiro__extra {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 @keyframes subir {
   from {
     transform: translateY(40px);
@@ -1641,6 +1966,12 @@ h2 {
 html,
 body {
   overflow-x: hidden;
+}
+.placar__regra {
+  text-align: center;
+  margin-top: 6px;
+  font-size: 14px;
+  opacity: 0.8;
 }
 .placar__fim {
   text-align: center;

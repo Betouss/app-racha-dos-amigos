@@ -23,7 +23,7 @@ export default function GrupoPage() {
     .map((uid) => ({ uid, ...(grupo.perfis[uid] ?? { nome: 'Participante', email: '' }), admin: grupo.admins.includes(uid) }))
     .sort((a, b) => Number(b.admin) - Number(a.admin) || a.nome.localeCompare(b.nome, 'pt-BR'))
 
-  const convidar = () => compartilharTexto(`Entre no grupo "${grupo.nome}" no Racha para acompanhar os jogos: ${link}`)
+  const convidar = () => compartilharTexto(`Entre no grupo "${grupo.nome}" no PeladaFC para acompanhar os jogos: ${link}`)
   const copiar = async () => {
     try {
       await navigator.clipboard.writeText(link)
@@ -65,7 +65,7 @@ export default function GrupoPage() {
         <section className="secao">
           <h2>Convidar</h2>
           <p className="sub" style={{ marginTop: 0 }}>
-            Quem entrar pelo link acompanha rachas, placar ao vivo e rankings. Só administradores editam.
+            Quem entrar pelo link acompanha peladas, placar ao vivo e rankings. Só administradores editam.
           </p>
           <div className="acoes acoes--2">
             <button className="btn btn--sm btn--ghost" onClick={copiar}>
@@ -104,7 +104,7 @@ export default function GrupoPage() {
           <section className="secao">
             <h2>Dados deste aparelho</h2>
             <p className="sub" style={{ marginTop: 0 }}>
-              Há {local.jogadores} jogador{local.jogadores === 1 ? '' : 'es'} e {local.rachas} racha{local.rachas === 1 ? '' : 's'} da versão sem login salvos aqui.
+              Há {local.jogadores} jogador{local.jogadores === 1 ? '' : 'es'} e {local.rachas} pelada{local.rachas === 1 ? '' : 's'} da versão sem login salvos aqui.
             </p>
             <div className="acoes">
               <button

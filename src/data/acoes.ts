@@ -1,6 +1,8 @@
 import { deleteField } from 'firebase/firestore'
 import { sortearTimes } from '../domain/sorteio'
+import { placar } from '../domain/stats'
 import { gerarTabela, type Confronto } from '../domain/tabela'
+import { vencedorFica } from '../domain/vencedorFica'
 import type { Gol, Id, Jogador, Partida, Racha } from '../domain/types'
 import { nomeTime } from './cores'
 import { Lote, novoId, ref, semId } from './firebase'
@@ -69,12 +71,14 @@ export function excluirRacha(ctx: Ctx, rachaId: Id) {
   l.enviar()
 }
 
-/** Sorteia (ou sorteia de novo) mantendo os jogadores travados. */
-export function sortear(ctx: Ctx, rachaId: Id) {
+/** Sorteia (ou sorteia de novo) mantendo os jogadores travados. Devolve a marca do sorteio. */
+export function sortear(ctx: Ctx, rachaId: Id): number | undefined {
   const { gid, base } = ctx
   const racha = base.rachas.find((r) => r.id === rachaId)
   if (!racha) return
   const l = new Lote()
+  const sorteioEm = Date.now()
+  l.update(ref(gid, 'rachas', rachaId), { sorteioEm })
   const presencas = base.presencas.filter((p) => p.rachaId === rachaId)
   const porId = new Map(base.jogadores.map((j) => [j.id, j]))
   const jogadores = presencas.map((p) => porId.get(p.jogadorId)).filter((j) => !!j)
@@ -114,6 +118,7 @@ export function sortear(ctx: Ctx, rachaId: Id) {
     if (p.reserva !== reservas.has(p.jogadorId)) l.update(ref(gid, 'presencas', presencaId(rachaId, p.jogadorId)), { reserva: reservas.has(p.jogadorId) })
   }
   l.enviar()
+  return sorteioEm
 }
 
 export function alternarTravado({ gid, base }: Ctx, timeId: Id, jogadorId: Id) {
@@ -184,7 +189,10 @@ export function confirmarTimes(ctx: Ctx, rachaId: Id) {
   if (!racha) return
   const { times, partidas } = confrontosDoRacha(ctx, rachaId)
   const l = new Lote()
-  if (partidas.length === 0) criarPartidas(l, ctx.gid, rachaId, times, gerarTabela(times.length, racha.idaVolta), 0)
+  if (partidas.length === 0) {
+    const jogos = racha.formato === 'vencedor_fica' ? [vencedorFica(times.length, []).proximo] : gerarTabela(times.length, racha.idaVolta)
+    criarPartidas(l, ctx.gid, rachaId, times, jogos, 0)
+  }
   l.update(ref(ctx.gid, 'rachas', rachaId), { status: 'em_andamento' })
   l.enviar()
 }
@@ -215,15 +223,50 @@ export function iniciarPartida({ gid, base }: Ctx, partidaId: Id) {
   l.enviar()
 }
 
-export function encerrarPartida({ gid }: Ctx, partidaId: Id) {
+/** Elencos atuais dos dois times da partida, guardados ao encerrar. */
+function escalacaoAtual(base: Ctx['base'], p: Partida): Record<Id, Id[]> {
+  const elenco = (timeId: Id) => base.timeJogadores.filter((tj) => tj.timeId === timeId).map((tj) => tj.jogadorId)
+  return { [p.timeAId]: elenco(p.timeAId), [p.timeBId]: elenco(p.timeBId) }
+}
+
+/** No "quem ganha fica" a próxima partida só existe depois que a anterior termina. */
+function criarProximaVencedorFica(l: Lote, ctx: Ctx, rachaId: Id, encerradaId: Id) {
+  const racha = ctx.base.rachas.find((r) => r.id === rachaId)
+  if (racha?.formato !== 'vencedor_fica' || racha.status !== 'em_andamento') return
+  const { times, partidas } = confrontosDoRacha(ctx, rachaId)
+  if (partidas.some((p) => p.status === 'agendada')) return
+  const indice = new Map(times.map((t, i) => [t.id, i]))
+  const jogos = partidas
+    .filter((p) => p.status === 'encerrada' || p.id === encerradaId)
+    .sort((a, b) => a.ordem - b.ordem)
+    .map((p) => {
+      const pl = placar(p, ctx.base.gols)
+      const a = indice.get(p.timeAId)!
+      const b = indice.get(p.timeBId)!
+      return { a, b, vencedor: pl.a > pl.b ? a : pl.b > pl.a ? b : null }
+    })
+  criarPartidas(l, ctx.gid, rachaId, times, [vencedorFica(times.length, jogos).proximo], Math.max(0, ...partidas.map((p) => p.ordem)))
+}
+
+export function encerrarPartida(ctx: Ctx, partidaId: Id) {
+  const { gid, base } = ctx
+  const p = base.partidas.find((x) => x.id === partidaId)
+  if (!p) return
   const l = new Lote()
-  l.update(ref(gid, 'partidas', partidaId), { status: 'encerrada', encerradaEm: Date.now() })
+  l.update(ref(gid, 'partidas', partidaId), { status: 'encerrada', encerradaEm: Date.now(), escalacao: escalacaoAtual(base, p) })
+  criarProximaVencedorFica(l, ctx, p.rachaId, partidaId)
   l.enviar()
 }
 
-export function reabrirPartida({ gid }: Ctx, partidaId: Id) {
+export function reabrirPartida({ gid, base }: Ctx, partidaId: Id) {
+  const p = base.partidas.find((x) => x.id === partidaId)
+  const racha = base.rachas.find((r) => r.id === p?.rachaId)
   const l = new Lote()
   l.update(ref(gid, 'partidas', partidaId), { status: 'em_andamento', encerradaEm: deleteField() })
+  // Quem ganha fica: a próxima partida dependia deste resultado; é gerada de novo ao encerrar
+  if (p && racha?.formato === 'vencedor_fica') {
+    for (const x of base.partidas) if (x.rachaId === p.rachaId && x.status === 'agendada' && x.ordem > p.ordem) l.delete(ref(gid, 'partidas', x.id))
+  }
   l.enviar()
 }
 
@@ -254,7 +297,7 @@ export function encerrarRacha({ gid, base }: Ctx, rachaId: Id) {
   const l = new Lote()
   for (const p of base.partidas) {
     if (p.rachaId !== rachaId) continue
-    if (p.status === 'em_andamento') l.update(ref(gid, 'partidas', p.id), { status: 'encerrada', encerradaEm: Date.now() })
+    if (p.status === 'em_andamento') l.update(ref(gid, 'partidas', p.id), { status: 'encerrada', encerradaEm: Date.now(), escalacao: escalacaoAtual(base, p) })
     if (p.status === 'agendada') l.delete(ref(gid, 'partidas', p.id))
   }
   l.update(ref(gid, 'rachas', rachaId), { status: 'encerrado' })

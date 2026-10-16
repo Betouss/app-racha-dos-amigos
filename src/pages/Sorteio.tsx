@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { nomeTime } from '../data/cores'
 import { alternarTravado, confirmarTimes, definirGoleiro, moverParaTime, reabrirSorteio, sortear, trocar, type Posicao } from '../data/acoes'
 import { useAdmin, useCtx, useRacha } from '../data/store'
 import type { Id } from '../domain/types'
@@ -14,42 +15,74 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
   const nav = useNavigate()
   const [sel, setSel] = useState<Posicao | null>(null)
   const [sorteando, setSorteando] = useState(false)
+  const [rodada, setRodada] = useState(0) // muda a cada sorteio para reanimar a revelação dos times
   const primeiro = useRef(false)
+  const timer = useRef<number | undefined>(undefined)
+  const meuSorteio = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
 
-  // Racha aberto ainda sem times: faz o primeiro sorteio
+  const mostrarSuspense = useCallback((aoFim: () => void) => {
+    setSel(null)
+    setSorteando(true)
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => {
+      aoFim()
+      setRodada((r) => r + 1)
+      setSorteando(false)
+    }, DURACAO_SORTEIO())
+  }, [])
+
+  // Suspense: mostra a animação e só sorteia no fim, para os times aparecerem já prontos
+  const sortearComSuspense = useCallback(() => {
+    mostrarSuspense(() => {
+      meuSorteio.current = sortear(ctx, rachaId)
+    })
+  }, [ctx, rachaId, mostrarSuspense])
+
+  // Quem acompanha (convidado ou outro admin) vê a mesma animação quando chega um sorteio novo.
+  // O resultado já chegou junto, mas fica coberto pela animação até a revelação.
+  const sorteioEm = dados?.racha.sorteioEm
+  const sorteioVisto = useRef(sorteioEm)
+  useEffect(() => {
+    if (sorteioEm === sorteioVisto.current) return
+    sorteioVisto.current = sorteioEm
+    if (!sorteioEm || sorteioEm === meuSorteio.current) return
+    // Sorteio antigo (ex.: a tela acabou de abrir): não anima
+    if (Date.now() - sorteioEm > 15_000) return
+    mostrarSuspense(() => {})
+  }, [sorteioEm, mostrarSuspense])
+
+  // Pelada aberta ainda sem times: faz o primeiro sorteio
   const precisaSortear = admin && !!dados && dados.racha.status === 'aberto' && dados.times.length === 0 && dados.presencas.length > 0
   useEffect(() => {
     if (!precisaSortear || primeiro.current) return
     primeiro.current = true
-    sortear(ctx, rachaId)
-  }, [precisaSortear, rachaId, ctx])
+    sortearComSuspense()
+  }, [precisaSortear, sortearComSuspense])
 
   if (dados === undefined) return null
-  if (dados === null) return <main className="page">Racha não encontrado.</main>
+  if (dados === null) return <main className="page">Pelada não encontrada.</main>
   const { racha, times, timeJogadores, presencas, jogadores, partidas } = dados
   const editavel = admin && racha.status === 'aberto'
+  // Com a pelada rolando o administrador ainda troca jogadores e goleiros; o que já foi jogado não muda
+  const trocavel = editavel || (admin && racha.status === 'em_andamento')
   const comecou = partidas.some((p) => p.status !== 'agendada')
   const porTime = new Map(times.map((t) => [t.id!, timeJogadores.filter((tj) => tj.timeId === t.id)]))
   const reservas = presencas.filter((p) => p.reserva).map((p) => p.jogadorId)
   const tamanho = racha.jogadoresLinha + 1
 
   const tocar = (p: Posicao) => {
-    if (!admin) return
+    if (!trocavel) return
     if (!sel) return setSel(p)
     if (sel.jogadorId === p.jogadorId) return setSel(null)
-    if (editavel && sel.timeId !== p.timeId) {
+    if (trocavel && sel.timeId !== p.timeId) {
       trocar(ctx, rachaId, sel, p)
       return setSel(null)
     }
     setSel(p)
   }
 
-  const resortear = () => {
-    setSorteando(true)
-    setSel(null)
-    sortear(ctx, rachaId)
-    setTimeout(() => setSorteando(false), 300)
-  }
+  const resortear = sortearComSuspense
 
   const confirmar = () => {
     confirmarTimes(ctx, rachaId)
@@ -67,13 +100,15 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
         ) : (
           <Voltar to={`/racha/${rachaId}/jogos`} label="Jogos" />
         )}
-        <p className="eyebrow">Passo 2 de 3</p>
-        <h1>Sorteio</h1>
+        <p className="eyebrow">{racha.status === 'aberto' ? 'Passo 2 de 3' : 'Times'}</p>
+        <h1>{racha.status === 'aberto' ? 'Sorteio' : trocavel ? 'Alterar times' : 'Times'}</h1>
         <p className="sub">
           {editavel
             ? 'Trave quem não pode mudar de time e sorteie de novo. Toque em dois jogadores para trocá-los.'
-            : admin
-              ? 'Times confirmados. Toque em um jogador para colocá-lo no gol.'
+            : trocavel
+              ? 'Toque em um jogador para colocá-lo no gol, ou em dois jogadores (ou um reserva) para trocá-los. Vale para as próximas partidas e para a que está ao vivo; as já encerradas não mudam.'
+              : admin
+                ? 'Times confirmados.'
               : racha.status === 'aberto'
                 ? 'Sorteio em andamento. Os times podem mudar até o administrador confirmar.'
                 : 'Times confirmados.'}
@@ -82,7 +117,7 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
         {sel && selecionado && (
           <div className="aviso" style={{ position: 'sticky', top: 8, zIndex: 5 }}>
             <strong>{selecionado.apelido}</strong> selecionado.{' '}
-            {editavel && (sel.timeId === null ? 'Toque em um jogador de time para trocar, ou em “Colocar aqui”.' : 'Toque em outro jogador para trocar.')}
+            {trocavel && (sel.timeId === null ? 'Toque em um jogador de time para trocar, ou em “Colocar aqui”.' : 'Toque em um jogador de outro time para trocar.')}
             <div className="acoes acoes--2" style={{ marginTop: 10 }}>
               {sel.timeId !== null && !selTj?.goleiro ? (
                 <button
@@ -104,7 +139,7 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
           </div>
         )}
 
-        <div className={`times${times.length === 1 ? ' times--1' : ''}`}>
+        <div key={rodada} className={`times${times.length === 1 ? ' times--1' : ''}${rodada > 0 ? ' times--revela' : ''}`}>
           {times.map((t) => {
             const elenco = porTime.get(t.id!) ?? []
             const ids = elenco.map((tj) => tj.jogadorId)
@@ -157,7 +192,7 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
                   {elenco.length < tamanho && (
                     <li className="slot" style={{ color: 'var(--muted)', fontSize: 14, justifyContent: 'space-between', paddingRight: 8 }}>
                       Faltam {tamanho - elenco.length}
-                      {editavel && sel?.timeId === null && (
+                      {trocavel && sel?.timeId === null && (
                         <button
                           className="link-btn"
                           onClick={() => {
@@ -188,7 +223,7 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
                   <button
                     key={id}
                     className={`reserva${sel?.jogadorId === id ? ' sel' : ''}`}
-                    disabled={!editavel}
+                    disabled={!trocavel}
                     onClick={() => tocar({ jogadorId: id, timeId: null })}
                   >
                     {j?.apelido}
@@ -218,12 +253,12 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
       </main>
       <Dock>
         {editavel ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 10 }}>
-            <button className="btn btn--outline" style={{ fontSize: 17, gap: 8 }} onClick={resortear} disabled={sorteando} aria-label="Sortear de novo">
-              <Icon name="sorteio" /> De novo
+          <div className="acoes acoes--2" style={{ marginTop: 0 }}>
+            <button className="btn btn--outline" style={{ fontSize: 16, gap: 8 }} onClick={resortear} disabled={sorteando}>
+              <Icon name="sorteio" /> Sortear outra vez
             </button>
-            <button className="btn" style={{ fontSize: 19, gap: 8 }} onClick={confirmar} disabled={times.length < 2}>
-              <Icon name="check" /> Confirmar
+            <button className="btn" style={{ fontSize: 16, gap: 8 }} onClick={confirmar} disabled={times.length < 2}>
+              <Icon name="check" /> Confirmar times
             </button>
           </div>
         ) : racha.status !== 'aberto' ? (
@@ -232,6 +267,67 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
           </button>
         ) : null}
       </Dock>
+
+      {sorteando && (
+        <SorteandoTimes
+          nomes={presencas.map((p) => jogadores.get(p.jogadorId)?.apelido ?? '').filter(Boolean)}
+          cores={Array.from({ length: racha.qtdTimes }, (_, i) => times[i]?.cor ?? nomeTime(i).cor)}
+        />
+      )}
     </>
+  )
+}
+
+const reduzMovimento = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+const DURACAO_SORTEIO = () => (reduzMovimento() ? 700 : 2600)
+
+const FASES = ['Embaralhando jogadores', 'Equilibrando as estrelas', 'Escolhendo os goleiros', 'Fechando os times']
+
+/** Tela de suspense do sorteio: nomes girando como num caça-níquel, cores dos times pulsando. */
+function SorteandoTimes({ nomes, cores }: { nomes: string[]; cores: string[] }) {
+  const [nome, setNome] = useState(0)
+  const [fase, setFase] = useState(0)
+
+  useEffect(() => {
+    if (nomes.length === 0) return
+    // Gira rápido e vai desacelerando, como uma roleta
+    let atraso = 60
+    let t: number
+    const girar = () => {
+      setNome((n) => (n + 1) % nomes.length)
+      atraso = Math.min(atraso * 1.12, 260)
+      t = window.setTimeout(girar, atraso)
+    }
+    t = window.setTimeout(girar, atraso)
+    return () => window.clearTimeout(t)
+  }, [nomes.length])
+
+  useEffect(() => {
+    const passo = DURACAO_SORTEIO() / FASES.length
+    const t = window.setInterval(() => setFase((f) => Math.min(f + 1, FASES.length - 1)), passo)
+    return () => window.clearInterval(t)
+  }, [])
+
+  return (
+    <div className="sorteando" role="status" aria-live="polite">
+      <div className="sorteando__campo" aria-hidden="true" />
+      <div className="sorteando__bola" aria-hidden="true">
+        <Icon name="bola" size={64} strokeWidth={1.6} />
+      </div>
+      <h2 className="sorteando__titulo">
+        Sorteando times<span className="sorteando__pontos" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span>
+      </h2>
+      <div className="sorteando__roleta" aria-hidden="true">
+        <span key={nome}>{nomes[nome] ?? '…'}</span>
+      </div>
+      <div className="sorteando__cores" aria-hidden="true">
+        {cores.map((c, i) => (
+          <span key={i} style={{ background: c, animationDelay: `${i * 0.18}s` }} />
+        ))}
+      </div>
+      <p className="sorteando__fase" key={fase}>
+        {FASES[fase]}
+      </p>
+    </div>
   )
 }

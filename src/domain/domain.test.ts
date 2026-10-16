@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { seeded } from './random'
 import { somaEstrelas, sortearTimes, type JogadorSorteio } from './sorteio'
 import { gerarTabela } from './tabela'
-import { artilharia, classificacao, placar } from './stats'
-import type { Gol, Partida, Time } from './types'
+import { vencedorFica } from './vencedorFica'
+import { artilharia, classificacao, goleiroQueSofreu, placar, statsPorJogador } from './stats'
+import type { Gol, Partida, Racha, Time, TimeJogador } from './types'
 
 const linha = (id: number, estrelas: number): JogadorSorteio => ({ id: String(id), estrelas, goleiro: false })
 const gk = (id: number): JogadorSorteio => ({ id: String(id), estrelas: 3, goleiro: true })
@@ -149,5 +150,61 @@ describe('placar e classificação', () => {
       ['3', 3],
     ])
     expect(t[0]).toMatchObject({ j: 2, v: 1, d: 1, gp: 3, gc: 2, sg: 1 })
+  })
+})
+
+describe('goleiros e escalação', () => {
+  const p: Partida = { id: 'p1', rachaId: 'r1', timeAId: 'A', timeBId: 'B', ordem: 1, status: 'encerrada' }
+  const tj = (timeId: string, jogadorId: string, goleiro = false): TimeJogador => ({ timeId, jogadorId, travado: false, goleiro })
+  const timeJogadores = [tj('A', 'gkA', true), tj('A', 'a1'), tj('B', 'gkB', true), tj('B', 'b1')]
+  const gol = (g: Partial<Gol>): Gol => ({ id: 'g', partidaId: 'p1', jogadorId: 'a1', timeId: 'A', contra: false, criadoEm: 0, ...g })
+
+  it('gol sofrido conta para o goleiro gravado ou, em gols antigos, para o goleiro atual', () => {
+    expect(goleiroQueSofreu(gol({ goleiroId: 'b1' }), p, timeJogadores)).toBe('b1')
+    expect(goleiroQueSofreu(gol({}), p, timeJogadores)).toBe('gkB')
+    // gol contra do time A: quem sofre é o goleiro do próprio A
+    expect(goleiroQueSofreu(gol({ contra: true }), p, timeJogadores)).toBe('gkA')
+  })
+
+  it('estatísticas usam a escalação gravada na partida, não o elenco atual', () => {
+    const racha = { id: 'r1', data: '2026-01-01T10:00', status: 'encerrado' } as Racha
+    const base = {
+      rachas: [racha],
+      times: [] as Time[],
+      timeJogadores,
+      partidas: [{ ...p, escalacao: { A: ['gkA', 'b1'], B: ['gkB'] } }],
+      gols: [gol({ goleiroId: 'gkB' }), gol({ id: 'g2', goleiroId: 'gkB' })],
+      presencas: [],
+    }
+    const s = statsPorJogador(base)
+    expect(s.get('gkB')?.golsSofridos).toBe(2)
+    expect(s.get('b1')).toMatchObject({ partidas: 1, v: 1 })
+    expect(s.get('a1')?.partidas).toBe(0)
+  })
+})
+
+describe('quem ganha fica', () => {
+  it('vencedor fica, perdedor vai para o fim da fila', () => {
+    // 4 times: 0×1, 1 vence → 1×2, 2 vence → 2×3
+    const r = vencedorFica(4, [
+      { a: 0, b: 1, vencedor: 1 },
+      { a: 1, b: 2, vencedor: 2 },
+    ])
+    expect(r.proximo).toEqual([2, 3])
+    expect(r.fila).toEqual([0, 1])
+  })
+
+  it('no empate sai quem está há mais tempo em quadra', () => {
+    // 0×1 empata: sai 0 (time A do primeiro jogo); 1×2 empata: sai 1, que está desde o início
+    const r = vencedorFica(3, [
+      { a: 0, b: 1, vencedor: null },
+      { a: 1, b: 2, vencedor: null },
+    ])
+    expect(r.proximo).toEqual([2, 0])
+    expect(r.fila).toEqual([1])
+  })
+
+  it('com 2 times é sempre o mesmo confronto', () => {
+    expect(vencedorFica(2, [{ a: 0, b: 1, vencedor: 0 }]).proximo).toEqual([0, 1])
   })
 })

@@ -50,7 +50,7 @@ function Tela({ children }: { children: ReactNode }) {
 function Carregando() {
   return (
     <Tela>
-      <h1 style={{ fontSize: 40 }}>Racha</h1>
+      <h1 style={{ fontSize: 40 }}>PeladaFC</h1>
       <p className="sub">Carregando…</p>
     </Tela>
   )
