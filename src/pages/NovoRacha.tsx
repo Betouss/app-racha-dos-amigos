@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { excluirRacha, salvarRacha } from '../data/acoes'
 import { useCtx } from '../data/store'
-import type { Id, Jogador } from '../domain/types'
-import { Avatar, Dock, GolBadge, Segmented, Stars, Stepper, Vazio } from '../ui/components'
+import type { FormatoRacha, Id, Jogador } from '../domain/types'
+import { Avatar, Confirmar, Dock, GolBadge, Segmented, Stars, Stepper, Vazio } from '../ui/components'
 import { deIso, diaHora, isoLocal } from '../ui/datas'
 import { Icon } from '../ui/Icon'
 
@@ -36,9 +36,12 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
   const [duracaoRacha, setDuracaoRacha] = useState(90)
   const [duracaoPartida, setDuracaoPartida] = useState(10)
   const [idaVolta, setIdaVolta] = useState(false)
+  const [formato, setFormato] = useState<FormatoRacha>('todos')
+  const [golsParaVencer, setGolsParaVencer] = useState(0)
   const [presentes, setPresentes] = useState<Set<Id>>(new Set())
   const [carregado, setCarregado] = useState(false)
   const [salvando, setSalvando] = useState(false)
+  const [cancelando, setCancelando] = useState(false)
 
   // Preenche com o racha em edição, ou repete o formato do último racha
   useEffect(() => {
@@ -52,6 +55,8 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
       setDuracaoRacha(r.duracaoRachaMin)
       setDuracaoPartida(r.duracaoPartidaMin)
       setIdaVolta(r.idaVolta)
+      setFormato(r.formato ?? 'todos')
+      setGolsParaVencer(r.golsParaVencer ?? 0)
     }
     setPresentes(new Set(anterior.presentes))
     setCarregado(true)
@@ -61,14 +66,16 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
   const vagas = qtdTimes * (linha + 1)
   const confirmados = presentes.size
   const minimo = qtdTimes * 2
-  const partidas = ((qtdTimes * (qtdTimes - 1)) / 2) * (idaVolta ? 2 : 1)
+  const vencedorFica = formato === 'vencedor_fica'
+  // Quem ganha fica não tem tabela fechada: estima quantas partidas cabem no tempo da pelada
+  const partidas = vencedorFica ? Math.max(1, Math.floor(duracaoRacha / duracaoPartida)) : ((qtdTimes * (qtdTimes - 1)) / 2) * (idaVolta ? 2 : 1)
   const minutosDeJogo = partidas * duracaoPartida
   const goleiros = useMemo(() => elenco.filter((j) => j.goleiro && presentes.has(j.id)).length, [elenco, presentes])
 
   if (rachaId && anterior.racha && anterior.racha.status !== 'aberto') {
     return (
       <main className="page page--sem-acao">
-        <h1>Racha iniciado</h1>
+        <h1>Pelada iniciada</h1>
         <p className="sub">As partidas já começaram; data, formato e presença não podem mais mudar.</p>
         <Dock />
       </main>
@@ -91,7 +98,7 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
     setSalvando(true)
     const id = salvarRacha(
       ctx,
-      { data, local: local.trim(), jogadoresLinha: linha, qtdTimes, duracaoRachaMin: duracaoRacha, duracaoPartidaMin: duracaoPartida, idaVolta },
+      { data, local: local.trim(), jogadoresLinha: linha, qtdTimes, duracaoRachaMin: duracaoRacha, duracaoPartidaMin: duracaoPartida, idaVolta: !vencedorFica && idaVolta, formato, golsParaVencer },
       [...presentes],
       rachaId,
     )
@@ -99,7 +106,7 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
   }
 
   const cancelar = () => {
-    if (!rachaId || !confirm('Cancelar este racha? A lista de presença e o sorteio serão apagados.')) return
+    if (!rachaId) return
     excluirRacha(ctx, rachaId)
     nav('/', { replace: true })
   }
@@ -108,7 +115,7 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
     <>
       <main className="page">
         <p className="eyebrow">Passo 1 de 3</p>
-        <h1>{rachaId ? 'Editar racha' : 'Novo racha'}</h1>
+        <h1>{rachaId ? 'Editar pelada' : 'Nova pelada'}</h1>
 
         <div className="form-2">
           <div>
@@ -165,7 +172,7 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
 
         <div className="form-2">
           <div>
-            <span className="label">Duração do racha</span>
+            <span className="label">Duração da pelada</span>
             <Stepper value={duracaoRacha} onChange={setDuracaoRacha} min={60} max={300} step={15} suffix="min" />
           </div>
           <div>
@@ -173,16 +180,53 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
             <Stepper value={duracaoPartida} onChange={setDuracaoPartida} min={3} max={45} suffix="min" />
           </div>
         </div>
-        <label className="toggle">
-          <span>
-            Ida e volta
-            <small>Cada confronto acontece duas vezes</small>
-          </span>
-          <input type="checkbox" checked={idaVolta} onChange={(e) => setIdaVolta(e.target.checked)} />
-        </label>
+
+        <span className="label">Formato das partidas</span>
+        <div className="segmented--texto">
+          <Segmented
+            label="Formato das partidas"
+            value={formato}
+            onChange={setFormato}
+            options={[
+              { value: 'todos', label: 'Todos contra todos' },
+              { value: 'vencedor_fica', label: 'Quem ganha fica' },
+            ]}
+          />
+        </div>
         <p className="hint">
-          {partidas} {partidas === 1 ? 'partida' : 'partidas'} × {duracaoPartida} min = {minutosDeJogo} min de bola rolando
-          {minutosDeJogo > duracaoRacha ? ` — passa dos ${duracaoRacha} min do racha.` : '.'}
+          {vencedorFica
+            ? 'O vencedor continua e enfrenta o time de fora; quem perde vai para o fim da fila. No empate sai quem está há mais tempo em quadra.'
+            : 'Tabela pronta em que todos os times se enfrentam.'}
+        </p>
+
+        <span className="label">Partida acaba com</span>
+        <div className="segmented--texto">
+          <Segmented
+            label="Gols para encerrar a partida"
+            value={golsParaVencer}
+            onChange={setGolsParaVencer}
+            options={[0, 1, 2, 3, 4].map((v) => ({ value: v, label: v === 0 ? 'Só o tempo' : `${v} gol${v > 1 ? 's' : ''}` }))}
+          />
+        </div>
+        <p className="hint">
+          {golsParaVencer > 0
+            ? `${golsParaVencer} gol${golsParaVencer > 1 ? 's' : ''} ou ${duracaoPartida} minutos, o que vier primeiro.`
+            : `A partida dura ${duracaoPartida} minutos.`}
+        </p>
+
+        {!vencedorFica && (
+          <label className="toggle">
+            <span>
+              Ida e volta
+              <small>Cada confronto acontece duas vezes</small>
+            </span>
+            <input type="checkbox" checked={idaVolta} onChange={(e) => setIdaVolta(e.target.checked)} />
+          </label>
+        )}
+        <p className="hint">
+          {vencedorFica
+            ? `Cabem cerca de ${partidas} partida${partidas === 1 ? '' : 's'} de até ${duracaoPartida} min nos ${duracaoRacha} min da pelada.`
+            : `${partidas} ${partidas === 1 ? 'partida' : 'partidas'} × ${duracaoPartida} min = ${minutosDeJogo} min de bola rolando${minutosDeJogo > duracaoRacha ? ` — passa dos ${duracaoRacha} min da pelada.` : '.'}`}
         </p>
 
         <section className="secao">
@@ -245,8 +289,8 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
           )}
           {rachaId && (
             <div className="acoes">
-              <button className="btn btn--danger" onClick={cancelar}>
-                Cancelar racha
+              <button className="btn btn--danger" onClick={() => setCancelando(true)}>
+                Cancelar pelada
               </button>
             </div>
           )}
@@ -257,6 +301,17 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
           <Icon name="sorteio" /> Ir para o sorteio
         </button>
       </Dock>
+      <Confirmar
+        aberto={cancelando}
+        titulo="Cancelar esta pelada?"
+        icone="lixo"
+        perigo
+        confirmar={<><Icon name="lixo" /> Cancelar</>}
+        onConfirmar={cancelar}
+        onFechar={() => setCancelando(false)}
+      >
+        A lista de presença e o sorteio serão apagados.
+      </Confirmar>
     </>
   )
 }

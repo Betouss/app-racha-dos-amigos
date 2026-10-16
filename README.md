@@ -1,4 +1,4 @@
-# Racha
+# PeladaFC
 
 PWA mobile first para organizar a pelada: presença, sorteio de times equilibrado por estrelas, jogo ao vivo com registro de gols, classificação, histórico, perfil e rankings.
 

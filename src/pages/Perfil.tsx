@@ -80,6 +80,13 @@ export default function Perfil({ jogadorId }: { jogadorId: Id }) {
             <span className="stat__valor">{s?.partidas ? `${Math.round(s.aproveitamento * 100)}%` : '–'}</span>
             <span className="stat__label">Aproveitamento</span>
           </div>
+          {(jogador.goleiro || (s?.golsSofridos ?? 0) > 0) && (
+            <div className="stat" style={{ gridColumn: '1 / -1' }}>
+              <Icon name="luva" />
+              <span className="stat__valor">{s?.golsSofridos ?? 0}</span>
+              <span className="stat__label">Gols sofridos no gol</span>
+            </div>
+          )}
         </div>
 
         <section className="secao">
@@ -104,9 +111,9 @@ export default function Perfil({ jogadorId }: { jogadorId: Id }) {
         </section>
 
         <section className="secao">
-          <h2>Gols por racha</h2>
+          <h2>Gols por pelada</h2>
           {porRacha.length === 0 ? (
-            <Vazio titulo="Nenhum racha neste período" />
+            <Vazio titulo="Nenhuma pelada neste período" />
           ) : (
             <ul className="lista lista--junta">
               {porRacha.map(({ racha, time, gols, assistencias }) => (

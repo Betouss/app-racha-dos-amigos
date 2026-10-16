@@ -41,7 +41,7 @@ export default function Inicio() {
             <p className="sub" style={{ margin: 0 }}>
               {hojeLongo()} · {grupo?.nome}
             </p>
-            <h1 style={{ fontSize: 40 }}>Racha</h1>
+            <h1 style={{ fontSize: 40 }}>PeladaFC</h1>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="icon-btn" onClick={alternar} aria-label={tema === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'}>
@@ -57,7 +57,7 @@ export default function Inicio() {
           <div className="pitch" style={{ marginTop: 20 }}>
             <div className="pitch__eyebrow">Bem-vindo</div>
             <div className="pitch__titulo">Tudo pronto</div>
-            <p style={{ margin: 0, lineHeight: 1.4 }}>Quando o administrador marcar o primeiro racha, ele aparece aqui.</p>
+            <p style={{ margin: 0, lineHeight: 1.4 }}>Quando o administrador marcar a primeira pelada, ela aparece aqui.</p>
           </div>
         ) : base.jogadores.length === 0 ? (
           <div className="pitch" style={{ marginTop: 20 }}>
@@ -77,7 +77,7 @@ export default function Inicio() {
           <CardAtivo ativo={ativo} base={base} />
         ) : (
           <Link className="pitch" to={admin ? '/racha/novo' : '/'} style={{ marginTop: 20 }}>
-            <div className="pitch__eyebrow">Próximo racha</div>
+            <div className="pitch__eyebrow">Próxima pelada</div>
             <div className="pitch__titulo">Nada marcado</div>
             <p style={{ margin: 0 }}>{admin ? 'Toque para marcar o próximo racha.' : 'O administrador ainda não marcou o próximo.'}</p>
           </Link>
@@ -135,18 +135,18 @@ export default function Inicio() {
 
         {base.jogadores.length > 0 && encerrados.length === 0 && !ativo && (
           <section className="secao">
-            <Vazio titulo="Nenhum racha ainda">O histórico aparece aqui depois do primeiro racha.</Vazio>
+            <Vazio titulo="Nenhuma pelada ainda">O histórico aparece aqui depois da primeira pelada.</Vazio>
           </section>
         )}
       </main>
       <Dock>
         {ativo ? (
           <button className="btn" onClick={() => nav(rotaDoRacha(ativo, base.partidas))}>
-            <Icon name="play" /> {admin ? 'Continuar racha' : 'Acompanhar racha'}
+            <Icon name="play" /> {admin ? 'Continuar pelada' : 'Acompanhar pelada'}
           </button>
         ) : !admin ? null : (
           <button className="btn" onClick={() => nav('/racha/novo')} disabled={base.jogadores.length === 0}>
-            <Icon name="mais" size={26} /> Novo racha
+            <Icon name="mais" size={26} /> Nova pelada
           </button>
         )}
       </Dock>
@@ -164,7 +164,7 @@ function CardAtivo({ ativo, base }: { ativo: Racha; base: BaseCompleta }) {
   return (
     <Link className="pitch" to={rotaDoRacha(ativo, base.partidas)} style={{ marginTop: 20 }}>
       <div className="topo" style={{ alignItems: 'center' }}>
-        <span className="pitch__eyebrow">{ativo.status === 'aberto' ? 'Próximo racha' : 'Racha em andamento'}</span>
+        <span className="pitch__eyebrow">{ativo.status === 'aberto' ? 'Próxima pelada' : 'Pelada em andamento'}</span>
         {aoVivo ? <span className="chip chip--live">Ao vivo</span> : <span className="chip">{relativo(ativo.data)}</span>}
       </div>
       <div className="pitch__titulo">{diaHora(ativo.data)}</div>
@@ -192,7 +192,7 @@ function CardAtivo({ ativo, base }: { ativo: Racha; base: BaseCompleta }) {
             ))}
           </div>
           <div style={{ fontSize: 14 }}>
-            {jogadas} de {partidas.length} partidas jogadas
+            {ativo.formato === 'vencedor_fica' ? `${jogadas} partida${jogadas === 1 ? '' : 's'} jogada${jogadas === 1 ? '' : 's'} · quem ganha fica` : `${jogadas} de ${partidas.length} partidas jogadas`}
           </div>
         </>
       )}

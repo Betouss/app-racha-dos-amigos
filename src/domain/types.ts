@@ -15,6 +15,9 @@ export interface Jogador {
 
 export type StatusRacha = 'aberto' | 'em_andamento' | 'encerrado'
 
+/** todos: todos contra todos, tabela pronta · vencedor_fica: quem ganha fica, próxima partida gerada ao fim de cada uma */
+export type FormatoRacha = 'todos' | 'vencedor_fica'
+
 export interface Racha {
   id: Id
   data: string // 'YYYY-MM-DDTHH:mm' (hora local)
@@ -24,6 +27,9 @@ export interface Racha {
   duracaoRachaMin: number // ≥ 60
   duracaoPartidaMin: number
   idaVolta: boolean
+  formato?: FormatoRacha // ausente = 'todos'
+  golsParaVencer?: number // quem chegar primeiro a N gols vence; ausente ou 0 = sem limite
+  sorteioEm?: number // epoch ms do último sorteio; avisa os convidados para mostrarem a animação
   status: StatusRacha
 }
 
@@ -59,6 +65,9 @@ export interface Partida {
   status: StatusPartida
   iniciadaEm?: number // epoch ms
   encerradaEm?: number
+  // Quem estava em cada time ao fim da partida (timeId → jogadores). Gravado ao encerrar,
+  // para que trocas posteriores não reescrevam o histórico. Ausente em partidas antigas.
+  escalacao?: Record<Id, Id[]>
 }
 
 export interface Gol {
@@ -69,5 +78,6 @@ export interface Gol {
   minuto?: number
   assistenciaId?: Id
   contra: boolean // gol contra: conta para o adversário de timeId
+  goleiroId?: Id // goleiro do time que sofreu o gol, no momento do gol
   criadoEm: number
 }

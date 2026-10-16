@@ -11,7 +11,7 @@ const sinal = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0')
 export default function Classificacao({ rachaId }: { rachaId: Id }) {
   const dados = useRacha(rachaId)
   if (dados === undefined) return null
-  if (dados === null) return <main className="page">Racha não encontrado.</main>
+  if (dados === null) return <main className="page">Pelada não encontrada.</main>
   const { racha, times, partidas, gols, timeJogadores, jogadores } = dados
 
   const tabela = classificacao(rachaId, times, partidas, gols)
@@ -32,7 +32,7 @@ export default function Classificacao({ rachaId }: { rachaId: Id }) {
     })
     compartilharTexto(
       [
-        `⚽ Racha ${diaCurto(racha.data)} — ${racha.local}`,
+        `⚽ Pelada ${diaCurto(racha.data)} — ${racha.local}`,
         lider ? `🏆 ${encerrado ? 'Campeão' : 'Líder'}: *${timePorId.get(lider.timeId)?.nome}* (${lider.pts} pts)` : '',
         `\n*Classificação*\n${linhas.join('\n')}`,
         art.length ? `\n*Artilheiros*\n${art.join('\n')}` : '',

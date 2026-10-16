@@ -41,13 +41,13 @@ export default function CriarGrupo() {
         <label className="label" htmlFor="nome-grupo">
           Nome do grupo
         </label>
-        <input id="nome-grupo" className="campo" placeholder="Ex.: Racha de Sábado" value={nome} onChange={(e) => setNome(e.target.value)} required />
+        <input id="nome-grupo" className="campo" placeholder="Ex.: Pelada de Sábado" value={nome} onChange={(e) => setNome(e.target.value)} required />
         {local && (
           <label className="toggle">
             <span>
               Trazer dados deste aparelho
               <small>
-                {local.jogadores} jogador{local.jogadores === 1 ? '' : 'es'} e {local.rachas} racha{local.rachas === 1 ? '' : 's'} salvos aqui
+                {local.jogadores} jogador{local.jogadores === 1 ? '' : 'es'} e {local.rachas} pelada{local.rachas === 1 ? '' : 's'} salvos aqui
               </small>
             </span>
             <input type="checkbox" checked={importar} onChange={(e) => setImportar(e.target.checked)} />

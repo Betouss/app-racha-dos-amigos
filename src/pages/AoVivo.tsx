@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { atualizarGol, desfazerGol, encerrarPartida, iniciarPartida, reabrirPartida, registrarGol } from '../data/acoes'
+import { atualizarGol, definirGoleiro, desfazerGol, encerrarPartida, iniciarPartida, reabrirPartida, registrarGol } from '../data/acoes'
 import { useAgora, useTelaAcesa } from '../data/hooks'
 import { useAdmin, useCtx, useRacha } from '../data/store'
-import { placar, timeDoGol } from '../domain/stats'
+import { goleiroQueSofreu, placar, timeDoGol, timeQueSofreu } from '../domain/stats'
 import type { Gol, Id, Jogador, Time } from '../domain/types'
-import { Avatar, Dock, Sheet, Stepper, TeamDot, teamStyle, useToast, Voltar } from '../ui/components'
+import { Avatar, Confirmar, Dock, Sheet, Stepper, TeamDot, teamStyle, useToast, Voltar } from '../ui/components'
 import { apitarFim } from '../ui/apito'
 import { mmss } from '../ui/datas'
 import { Icon } from '../ui/Icon'
@@ -25,6 +25,8 @@ export default function AoVivo() {
   const [golDe, setGolDe] = useState<Id | null>(null) // time beneficiado
   const [assistDe, setAssistDe] = useState<Id | null>(null) // id do gol
   const [editando, setEditando] = useState<Id | null>(null)
+  const [trocaGoleiro, setTrocaGoleiro] = useState<Id | null>(null) // time
+  const [confirmaFim, setConfirmaFim] = useState(false)
   const avisou = useRef(false)
 
   const partida = dados?.partidas.find((p) => p.id === partidaId)
@@ -35,6 +37,23 @@ export default function AoVivo() {
   const decorrido = esgotado ? duracaoMs : bruto
   // Só apita se a virada aconteceu agora, com a tela aberta — não ao reabrir uma partida antiga
   const apitarAgora = esgotado && partida?.status === 'em_andamento' && bruto - duracaoMs < 10_000
+
+  // Partida com limite de gols: quem chega primeiro vence e a partida acaba
+  const limite = dados?.racha.golsParaVencer ?? 0
+  const plAtual = partida && dados ? placar(partida, dados.gols) : { a: 0, b: 0 }
+  const bateuLimite = limite > 0 && partida?.status === 'em_andamento' && Math.max(plAtual.a, plAtual.b) >= limite
+  const avisouLimite = useRef(false)
+  useEffect(() => {
+    if (!bateuLimite) {
+      avisouLimite.current = false
+      return
+    }
+    if (avisouLimite.current) return
+    avisouLimite.current = true
+    apitarFim()
+    navigator.vibrate?.([400, 150, 900])
+    if (admin) setConfirmaFim(true)
+  }, [bateuLimite, admin])
 
   useEffect(() => {
     if (apitarAgora && !avisou.current) {
@@ -56,6 +75,19 @@ export default function AoVivo() {
       .sort((a, b) => Number(a.goleiro) - Number(b.goleiro) || (jogadores.get(a.jogadorId)?.apelido ?? '').localeCompare(jogadores.get(b.jogadorId)?.apelido ?? ''))
       .map((tj) => ({ ...jogadores.get(tj.jogadorId)!, goleiroNoJogo: tj.goleiro }))
   const outro = (timeId: Id) => (timeId === timeA.id ? timeB : timeA)
+  const goleiroDoTime = (timeId: Id) => timeJogadores.find((tj) => tj.timeId === timeId && tj.goleiro)?.jogadorId
+  // Gols sofridos por goleiro, por time; o goleiro atual aparece mesmo sem ter sofrido gol
+  const sofridos = (timeId: Id) => {
+    const m = new Map<Id, number>()
+    const atual = goleiroDoTime(timeId)
+    if (atual) m.set(atual, 0)
+    for (const g of lances) {
+      if (timeQueSofreu(g, partida) !== timeId) continue
+      const gk = goleiroQueSofreu(g, partida, timeJogadores)
+      if (gk) m.set(gk, (m.get(gk) ?? 0) + 1)
+    }
+    return { atual, porGoleiro: [...m.entries()] }
+  }
   const timeDoJogador = (jogadorId: Id) => (timeJogadores.find((tj) => tj.jogadorId === jogadorId && (tj.timeId === timeA.id || tj.timeId === timeB.id))?.timeId ?? timeA.id!)
   const minutoAtual = Math.min(Math.floor(decorrido / 60000) + 1, racha.duracaoPartidaMin)
   const aoVivo = partida.status === 'em_andamento'
@@ -67,6 +99,7 @@ export default function AoVivo() {
       jogadorId: autor.id,
       timeId: contra ? outro(beneficiado.id).id : beneficiado.id,
       contra,
+      goleiroId: goleiroDoTime(outro(beneficiado.id).id),
       minuto: partida.iniciadaEm ? minutoAtual : undefined,
     })
     navigator.vibrate?.(60)
@@ -77,6 +110,7 @@ export default function AoVivo() {
   }
 
   const encerrar = () => {
+    setConfirmaFim(false)
     encerrarPartida(ctx, partidaId)
     nav(`/racha/${rachaId}/jogos`, { replace: true })
   }
@@ -91,7 +125,8 @@ export default function AoVivo() {
         <section className="placar">
           <div className="placar__topo">
             <span className="pitch__eyebrow">
-              Partida {partida.ordem} de {partidas.length}
+              Partida {partida.ordem}
+              {racha.formato === 'vencedor_fica' ? '' : ` de ${partidas.length}`}
             </span>
             {aoVivo ? <span className="chip chip--live">Ao vivo</span> : <span className="chip">{partida.status === 'encerrada' ? 'Encerrada' : 'Agendada'}</span>}
           </div>
@@ -115,7 +150,15 @@ export default function AoVivo() {
             <Icon name="relogio" size={28} /> {mmss(decorrido)}
             {duracaoMs > 0 && !esgotado && <small>/ {mmss(duracaoMs)}</small>}
           </div>
-          {esgotado && aoVivo && <div className="placar__fim">Tempo esgotado · encerre a partida</div>}
+          {bateuLimite ? (
+            <div className="placar__fim">
+              {pl.a >= limite ? timeA.nome : timeB.nome} fez {limite} gol{limite > 1 ? 's' : ''} · encerre a partida
+            </div>
+          ) : esgotado && aoVivo ? (
+            <div className="placar__fim">Tempo esgotado · encerre a partida</div>
+          ) : (
+            limite > 0 && <div className="placar__regra">Vence quem fizer {limite} gol{limite > 1 ? 's' : ''} primeiro</div>
+          )}
         </section>
 
         {!admin ? null : partida.status === 'agendada' ? (
@@ -134,6 +177,48 @@ export default function AoVivo() {
               </button>
             ))}
           </div>
+        )}
+
+        <div className="goleiros">
+          {[timeA, timeB].map((t) => {
+            const { atual, porGoleiro } = sofridos(t.id)
+            const gkAtual = atual ? jogadores.get(atual) : undefined
+            const golsAtual = porGoleiro.find(([id]) => id === atual)?.[1] ?? 0
+            const anteriores = porGoleiro.filter(([id]) => id !== atual)
+            const podeTrocar = admin && partida.status !== 'encerrada'
+            return (
+              <button
+                key={t.id}
+                className="goleiro"
+                onClick={() => podeTrocar && setTrocaGoleiro(t.id)}
+                disabled={!podeTrocar}
+                aria-label={podeTrocar ? `Trocar goleiro do ${t.nome}` : undefined}
+              >
+                <span className="goleiro__time">
+                  <TeamDot cor={t.cor} size={10} /> Goleiro · {t.nome}
+                </span>
+                <span className="goleiro__nome">
+                  <Icon name="luva" size={18} /> {gkAtual?.apelido ?? 'Sem goleiro'}
+                  {podeTrocar && <Icon name="troca" size={16} />}
+                </span>
+                {gkAtual && (
+                  <span className="goleiro__sofridos">
+                    <b>{golsAtual}</b> gol{golsAtual === 1 ? '' : 's'} sofrido{golsAtual === 1 ? '' : 's'}
+                  </span>
+                )}
+                {anteriores.map(([id, n]) => (
+                  <span key={id} className="goleiro__extra">
+                    {jogadores.get(id)?.apelido}: {n} sofrido{n === 1 ? '' : 's'}
+                  </span>
+                ))}
+              </button>
+            )
+          })}
+        </div>
+        {admin && partida.status !== 'encerrada' && racha.status !== 'encerrado' && (
+          <button className="link-btn" style={{ marginTop: 4 }} onClick={() => nav(`/racha/${rachaId}/sorteio`)}>
+            <Icon name="users" size={18} /> Trocar jogadores dos times
+          </button>
         )}
 
         <div className="lances-head">
@@ -189,11 +274,64 @@ export default function AoVivo() {
             </button>
           </div>
         ) : (
-          <button className={`btn${esgotado ? '' : ' btn--outline'}`} onClick={encerrar} disabled={!aoVivo}>
+          <button className={`btn${esgotado || bateuLimite ? '' : ' btn--outline'}`} onClick={() => setConfirmaFim(true)} disabled={!aoVivo}>
             <Icon name="relogio" /> Encerrar partida
           </button>
         )}
       </Dock>
+
+      <Confirmar
+        aberto={confirmaFim}
+        titulo={bateuLimite ? `${pl.a >= limite ? timeA.nome : timeB.nome} fez ${limite} gol${limite > 1 ? 's' : ''}!` : `Encerrar a partida ${partida.ordem}?`}
+        icone={bateuLimite ? 'trofeu' : 'relogio'}
+        confirmar={<><Icon name="check" /> Encerrar</>}
+        onConfirmar={encerrar}
+        onFechar={() => setConfirmaFim(false)}
+      >
+        {bateuLimite ? 'Fim de jogo.' : esgotado ? 'O tempo acabou.' : `Ainda faltam ${mmss(duracaoMs - decorrido)} no relógio.`} O placar final fica assim:
+        <div className="modal__destaque">
+          <TeamDot cor={timeA.cor} /> {timeA.nome} {pl.a} × {pl.b} {timeB.nome} <TeamDot cor={timeB.cor} />
+        </div>
+      </Confirmar>
+
+      <Sheet
+        open={trocaGoleiro !== null}
+        onClose={() => setTrocaGoleiro(null)}
+        title={
+          <>
+            <Icon name="luva" /> Quem vai pro gol?
+          </>
+        }
+      >
+        {trocaGoleiro && (
+          <>
+            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
+              Os próximos gols sofridos pelo {times.find((t) => t.id === trocaGoleiro)?.nome} contam para o novo goleiro.
+            </p>
+            <div className="escolha">
+              {elenco(trocaGoleiro).map((j) => (
+                <button
+                  key={j.id}
+                  className={j.goleiroNoJogo ? 'on' : ''}
+                  onClick={() => {
+                    if (!j.goleiroNoJogo) {
+                      definirGoleiro(ctx, trocaGoleiro, j.id)
+                      toast.mostrar({ texto: `${j.apelido} agora está no gol` })
+                    }
+                    setTrocaGoleiro(null)
+                  }}
+                >
+                  <Avatar jogador={j} size={36} />
+                  <span>
+                    {j.apelido}
+                    {j.goleiroNoJogo && <small>goleiro atual</small>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </Sheet>
 
       <EscolherAutor
         aberto={golDe !== null}
@@ -232,6 +370,7 @@ export default function AoVivo() {
           elenco={elenco}
           timeDoJogador={timeDoJogador}
           times={[timeA, timeB]}
+          goleiroDoTime={goleiroDoTime}
           onFechar={() => setEditando(null)}
         />
       )}
@@ -301,6 +440,7 @@ function EditarGol({
   elenco,
   timeDoJogador,
   times,
+  goleiroDoTime,
   onFechar,
 }: {
   gol: Gol
@@ -308,6 +448,7 @@ function EditarGol({
   elenco: (timeId: Id) => JogadorNoJogo[]
   timeDoJogador: (jogadorId: Id) => Id
   times: Time[]
+  goleiroDoTime: (timeId: Id) => Id | undefined
   onFechar: () => void
 }) {
   const [autor, setAutor] = useState(gol.jogadorId)
@@ -319,10 +460,14 @@ function EditarGol({
   const companheiros = elenco(timeAutor).filter((j) => j.id !== autor)
 
   const salvar = () => {
+    // Time que sofreu: o do autor em gol contra, senão o adversário
+    const sofreu = contra ? timeAutor : times.find((t) => t.id !== timeAutor)!.id
+    const sofreuAntes = gol.contra ? gol.timeId : times.find((t) => t.id !== gol.timeId)!.id
     atualizarGol(ctx, gol.id, {
       jogadorId: autor,
       timeId: timeAutor,
       contra,
+      goleiroId: sofreu === sofreuAntes && gol.goleiroId ? gol.goleiroId : goleiroDoTime(sofreu),
       assistenciaId: contra ? undefined : companheiros.some((j) => j.id === assist) ? assist : undefined,
       minuto,
     })

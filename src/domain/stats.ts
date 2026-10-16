@@ -12,6 +12,21 @@ export function timeDoGol(gol: Gol, partida: Partida): Id {
   return gol.timeId === partida.timeAId ? partida.timeBId : partida.timeAId
 }
 
+/** Time que sofreu o gol (o adversário do beneficiado). */
+export function timeQueSofreu(gol: Gol, partida: Partida): Id {
+  return timeDoGol(gol, partida) === partida.timeAId ? partida.timeBId : partida.timeAId
+}
+
+/**
+ * Goleiro que sofreu o gol: o gravado no gol ou, em gols antigos, o goleiro
+ * atual do time que sofreu.
+ */
+export function goleiroQueSofreu(gol: Gol, partida: Partida, timeJogadores: readonly TimeJogador[]): Id | undefined {
+  if (gol.goleiroId) return gol.goleiroId
+  const timeId = timeQueSofreu(gol, partida)
+  return timeJogadores.find((tj) => tj.timeId === timeId && tj.goleiro)?.jogadorId
+}
+
 /** Placar nunca é digitado: é a contagem dos gols da partida. */
 export function placar(partida: Partida, gols: readonly Gol[]): Placar {
   const p = { a: 0, b: 0 }
@@ -151,6 +166,7 @@ export interface StatsJogador {
   jogadorId: Id
   gols: number
   assistencias: number
+  golsSofridos: number // como goleiro
   partidas: number
   rachas: number // presenças em rachas encerrados
   v: number
@@ -185,7 +201,7 @@ export function statsPorJogador(base: Base, filtroRacha: (r: Racha) => boolean =
   const get = (id: Id) => {
     let s = stats.get(id)
     if (!s) {
-      s = { jogadorId: id, gols: 0, assistencias: 0, partidas: 0, rachas: 0, v: 0, e: 0, d: 0, aproveitamento: 0, titulos: 0, ultimos: [] }
+      s = { jogadorId: id, gols: 0, assistencias: 0, golsSofridos: 0, partidas: 0, rachas: 0, v: 0, e: 0, d: 0, aproveitamento: 0, titulos: 0, ultimos: [] }
       stats.set(id, s)
     }
     return s
@@ -211,10 +227,16 @@ export function statsPorJogador(base: Base, filtroRacha: (r: Racha) => boolean =
     golsPorPartida.set(g.partidaId, l)
   }
   for (const p of partidas) {
-    const pl = placar(p, golsPorPartida.get(p.id!) ?? [])
+    const golsDaPartida = golsPorPartida.get(p.id!) ?? []
+    const pl = placar(p, golsDaPartida)
+    for (const g of golsDaPartida) {
+      const gk = goleiroQueSofreu(g, p, base.timeJogadores)
+      if (gk) get(gk).golsSofridos++
+    }
     for (const timeId of [p.timeAId, p.timeBId]) {
       const r = resultadoDoTime(timeId, p, pl)
-      for (const jid of elencos.get(timeId) ?? []) {
+      // Escalação gravada ao encerrar; partidas antigas usam o elenco atual do time
+      for (const jid of p.escalacao?.[timeId] ?? elencos.get(timeId) ?? []) {
         const s = get(jid)
         s.partidas++
         if (r === 'V') s.v++
