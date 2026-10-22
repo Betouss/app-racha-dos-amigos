@@ -99,6 +99,11 @@ export function sortear(ctx: Ctx, rachaId: Id): number | undefined {
     qtdTimes: racha.qtdTimes,
     jogadoresLinha: racha.jogadoresLinha,
     travados,
+    goleirosRotativos:
+      racha.goleirosRotativos ??
+      (racha.formato === 'vencedor_fica' &&
+        jogadores.filter((j) => j.goleiro).length < racha.qtdTimes &&
+        jogadores.filter((j) => j.goleiro).length > 0),
   })
 
   const novos = new Set<string>()
@@ -139,6 +144,23 @@ export function definirGoleiro({ gid, base }: Ctx, timeId: Id, jogadorId: Id) {
   l.enviar()
 }
 
+/** Define o goleiro de um time especificamente para uma partida (suporta goleiro de outro time/rotativo). */
+export function definirGoleiroPartida({ gid, base }: Ctx, partidaId: Id, timeId: Id, jogadorId: Id) {
+  const p = base.partidas.find((x) => x.id === partidaId)
+  if (!p) return
+  const l = new Lote()
+  const goleiros = { ...(p.goleiros ?? {}), [timeId]: jogadorId }
+  l.update(ref(gid, 'partidas', partidaId), { goleiros })
+
+  // Se o jogador faz parte do time no geral, também o marca como goleiro do time
+  for (const tj of base.timeJogadores) {
+    if (tj.timeId !== timeId) continue
+    const goleiro = tj.jogadorId === jogadorId
+    if (tj.goleiro !== goleiro) l.update(ref(gid, 'timeJogadores', timeJogadorId(timeId, tj.jogadorId)), { goleiro })
+  }
+  l.enviar()
+}
+
 /** Posição de um jogador no sorteio: em um time ou entre os reservas (timeId null). */
 export interface Posicao {
   jogadorId: Id
@@ -169,6 +191,61 @@ export function moverParaTime({ gid }: Ctx, rachaId: Id, jogadorId: Id, timeId: 
   l.enviar()
 }
 
+/** Move um jogador diretamente de um time para outro (ou para reserva) sem exigir troca 1-a-1. */
+export function moverJogadorDeTime(
+  { gid, base }: Ctx,
+  rachaId: Id,
+  jogadorId: Id,
+  origemTimeId: Id | null,
+  destinoTimeId: Id | null,
+) {
+  if (origemTimeId === destinoTimeId) return
+  const l = new Lote()
+  if (origemTimeId) {
+    l.delete(ref(gid, 'timeJogadores', timeJogadorId(origemTimeId, jogadorId)))
+  }
+  if (destinoTimeId) {
+    const tjExistente = base.timeJogadores.find((tj) => tj.timeId === origemTimeId && tj.jogadorId === jogadorId)
+    l.set(ref(gid, 'timeJogadores', timeJogadorId(destinoTimeId, jogadorId)), {
+      timeId: destinoTimeId,
+      jogadorId,
+      travado: false,
+      goleiro: tjExistente?.goleiro ?? false,
+    })
+  }
+  l.update(ref(gid, 'presencas', presencaId(rachaId, jogadorId)), {
+    reserva: destinoTimeId === null,
+  })
+  l.enviar()
+}
+
+/** Adiciona um jogador emprestado a um time em uma partida específica. */
+export function adicionarJogadorNaPartida({ gid, base }: Ctx, partidaId: Id, timeId: Id, jogadorId: Id) {
+  const p = base.partidas.find((x) => x.id === partidaId)
+  if (!p) return
+  const l = new Lote()
+  const extras = p.jogadoresExtras ?? {}
+  const lista = new Set(extras[timeId] ?? [])
+  lista.add(jogadorId)
+  l.update(ref(gid, 'partidas', partidaId), {
+    jogadoresExtras: { ...extras, [timeId]: [...lista] },
+  })
+  l.enviar()
+}
+
+/** Remove um jogador emprestado de um time em uma partida específica. */
+export function removerJogadorDaPartida({ gid, base }: Ctx, partidaId: Id, timeId: Id, jogadorId: Id) {
+  const p = base.partidas.find((x) => x.id === partidaId)
+  if (!p) return
+  const l = new Lote()
+  const extras = p.jogadoresExtras ?? {}
+  const lista = (extras[timeId] ?? []).filter((id) => id !== jogadorId)
+  l.update(ref(gid, 'partidas', partidaId), {
+    jogadoresExtras: { ...extras, [timeId]: lista },
+  })
+  l.enviar()
+}
+
 function confrontosDoRacha({ base }: Ctx, rachaId: Id) {
   const times = base.times.filter((t) => t.rachaId === rachaId)
   const partidas = base.partidas.filter((p) => p.rachaId === rachaId)
@@ -177,9 +254,24 @@ function confrontosDoRacha({ base }: Ctx, rachaId: Id) {
   return { times, partidas, anteriores }
 }
 
-function criarPartidas(l: Lote, gid: Id, rachaId: Id, times: { id: Id }[], jogos: Confronto[], base: number) {
+function criarPartidas(
+  l: Lote,
+  gid: Id,
+  rachaId: Id,
+  times: { id: Id }[],
+  jogos: Confronto[],
+  base: number,
+  goleirosIniciais?: Record<Id, Id>,
+) {
   jogos.forEach(([a, b], i) => {
-    const p: Omit<Partida, 'id'> = { rachaId, timeAId: times[a].id, timeBId: times[b].id, ordem: base + i + 1, status: 'agendada' }
+    const p: Omit<Partida, 'id'> = {
+      rachaId,
+      timeAId: times[a].id,
+      timeBId: times[b].id,
+      ordem: base + i + 1,
+      status: 'agendada',
+      ...(goleirosIniciais ? { goleiros: goleirosIniciais } : {}),
+    }
     l.set(ref(gid, 'partidas', novoId()), p)
   })
 }
@@ -225,7 +317,12 @@ export function iniciarPartida({ gid, base }: Ctx, partidaId: Id) {
 
 /** Elencos atuais dos dois times da partida, guardados ao encerrar. */
 function escalacaoAtual(base: Ctx['base'], p: Partida): Record<Id, Id[]> {
-  const elenco = (timeId: Id) => base.timeJogadores.filter((tj) => tj.timeId === timeId).map((tj) => tj.jogadorId)
+  const elenco = (timeId: Id) => {
+    const ids = new Set(base.timeJogadores.filter((tj) => tj.timeId === timeId).map((tj) => tj.jogadorId))
+    if (p.goleiros?.[timeId]) ids.add(p.goleiros[timeId])
+    for (const extraId of p.jogadoresExtras?.[timeId] ?? []) ids.add(extraId)
+    return [...ids]
+  }
   return { [p.timeAId]: elenco(p.timeAId), [p.timeBId]: elenco(p.timeBId) }
 }
 
@@ -245,7 +342,34 @@ function criarProximaVencedorFica(l: Lote, ctx: Ctx, rachaId: Id, encerradaId: I
       const b = indice.get(p.timeBId)!
       return { a, b, vencedor: pl.a > pl.b ? a : pl.b > pl.a ? b : null }
     })
-  criarPartidas(l, ctx.gid, rachaId, times, [vencedorFica(times.length, jogos).proximo], Math.max(0, ...partidas.map((p) => p.ordem)))
+  const proximo = vencedorFica(times.length, jogos).proximo
+
+  // Sugere o goleiro do time que acabou de perder para o time que está entrando (se não tiver goleiro fixo)
+  const recemEncerrada = partidas.find((p) => p.id === encerradaId)
+  const goleirosIniciais: Record<Id, Id> = {}
+  if (recemEncerrada) {
+    const pl = placar(recemEncerrada, ctx.base.gols)
+    const timePerdedorId = pl.a > pl.b ? recemEncerrada.timeBId : pl.b > pl.a ? recemEncerrada.timeAId : recemEncerrada.timeAId
+    const goleiroSugerido =
+      recemEncerrada.goleiros?.[timePerdedorId] ??
+      ctx.base.timeJogadores.find((tj) => tj.timeId === timePerdedorId && tj.goleiro)?.jogadorId
+
+    const timeEntrandoId = times[proximo[1]].id
+    const timeEntrandoTemGk = ctx.base.timeJogadores.some((tj) => tj.timeId === timeEntrandoId && tj.goleiro)
+    if (goleiroSugerido && !timeEntrandoTemGk) {
+      goleirosIniciais[timeEntrandoId] = goleiroSugerido
+    }
+  }
+
+  criarPartidas(
+    l,
+    ctx.gid,
+    rachaId,
+    times,
+    [proximo],
+    Math.max(0, ...partidas.map((p) => p.ordem)),
+    Object.keys(goleirosIniciais).length > 0 ? goleirosIniciais : undefined,
+  )
 }
 
 export function encerrarPartida(ctx: Ctx, partidaId: Id) {

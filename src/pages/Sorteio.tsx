@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { nomeTime } from '../data/cores'
-import { alternarTravado, confirmarTimes, definirGoleiro, moverParaTime, reabrirSorteio, sortear, trocar, type Posicao } from '../data/acoes'
+import { alternarTravado, confirmarTimes, definirGoleiro, moverParaTime, moverJogadorDeTime, reabrirSorteio, sortear, trocar, type Posicao } from '../data/acoes'
 import { useAdmin, useCtx, useRacha } from '../data/store'
 import type { Id } from '../domain/types'
 import { somaEstrelas } from '../domain/sorteio'
@@ -117,7 +117,10 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
         {sel && selecionado && (
           <div className="aviso" style={{ position: 'sticky', top: 8, zIndex: 5 }}>
             <strong>{selecionado.apelido}</strong> selecionado.{' '}
-            {trocavel && (sel.timeId === null ? 'Toque em um jogador de time para trocar, ou em “Colocar aqui”.' : 'Toque em um jogador de outro time para trocar.')}
+            {trocavel &&
+              (sel.timeId === null
+                ? 'Toque em um jogador de time para trocar, ou em “Colocar aqui”.'
+                : 'Toque em outro jogador para trocar, ou em “Mover para cá” para transferir.')}
             <div className="acoes acoes--2" style={{ marginTop: 10 }}>
               {sel.timeId !== null && !selTj?.goleiro ? (
                 <button
@@ -153,6 +156,11 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
                 <div className="time-card__head">
                   <span>{t.nome}</span>
                   <span className="time-card__soma">
+                    {!goleiroId && (
+                      <span title="Goleiro rotativo" style={{ marginRight: 6, fontSize: 12, opacity: 0.85, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        <Icon name="luva" size={13} /> rotativo
+                      </span>
+                    )}
                     <Star size={18} /> {soma}
                   </span>
                 </div>
@@ -206,6 +214,20 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
                     </li>
                   )}
                 </ul>
+                {trocavel && sel && sel.timeId !== t.id && (
+                  <div style={{ padding: '8px 12px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      className="link-btn"
+                      style={{ fontSize: 13, gap: 4 }}
+                      onClick={() => {
+                        moverJogadorDeTime(ctx, rachaId, sel.jogadorId, sel.timeId, t.id!)
+                        setSel(null)
+                      }}
+                    >
+                      <Icon name="check" size={14} /> Mover {selecionado?.apelido} para cá
+                    </button>
+                  </div>
+                )}
               </section>
             )
           })}
@@ -235,6 +257,19 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
                 )
               })}
             </div>
+            {trocavel && sel && sel.timeId !== null && (
+              <div style={{ marginTop: 10 }}>
+                <button
+                  className="btn btn--sm btn--ghost"
+                  onClick={() => {
+                    moverJogadorDeTime(ctx, rachaId, sel.jogadorId, sel.timeId, null)
+                    setSel(null)
+                  }}
+                >
+                  <Icon name="check" size={14} /> Mover {selecionado?.apelido} para reserva
+                </button>
+              </div>
+            )}
           </section>
         )}
 

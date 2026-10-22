@@ -1,5 +1,5 @@
 import { hashTexto, seeded } from './random'
-import type { Gol, Id, Partida, Racha, Time, TimeJogador } from './types'
+import type { Gol, Id, Jogador, Partida, Racha, Time, TimeJogador } from './types'
 
 export interface Placar {
   a: number
@@ -24,7 +24,7 @@ export function timeQueSofreu(gol: Gol, partida: Partida): Id {
 export function goleiroQueSofreu(gol: Gol, partida: Partida, timeJogadores: readonly TimeJogador[]): Id | undefined {
   if (gol.goleiroId) return gol.goleiroId
   const timeId = timeQueSofreu(gol, partida)
-  return timeJogadores.find((tj) => tj.timeId === timeId && tj.goleiro)?.jogadorId
+  return partida.goleiros?.[timeId] ?? timeJogadores.find((tj) => tj.timeId === timeId && tj.goleiro)?.jogadorId
 }
 
 /** Placar nunca é digitado: é a contagem dos gols da partida. */
@@ -160,6 +160,7 @@ export interface Base {
   partidas: Partida[]
   gols: Gol[]
   presencas: { rachaId: Id; jogadorId: Id }[]
+  jogadores?: Jogador[]
 }
 
 export interface StatsJogador {
@@ -220,6 +221,16 @@ export function statsPorJogador(base: Base, filtroRacha: (r: Racha) => boolean =
     s.assistencias = a.assistencias
   }
 
+  // Gols e assistências históricas de peladas anteriores
+  if (base.jogadores) {
+    for (const j of base.jogadores) {
+      const s = get(j.id)
+      const golsAnteriores = j.gols ?? j.golsHistoricos ?? 0
+      if (golsAnteriores) s.gols += golsAnteriores
+      if (j.assistenciasHistoricas) s.assistencias += j.assistenciasHistoricas
+    }
+  }
+
   const golsPorPartida = new Map<Id, Gol[]>()
   for (const g of golsValidos) {
     const l = golsPorPartida.get(g.partidaId) ?? []
@@ -236,7 +247,10 @@ export function statsPorJogador(base: Base, filtroRacha: (r: Racha) => boolean =
     for (const timeId of [p.timeAId, p.timeBId]) {
       const r = resultadoDoTime(timeId, p, pl)
       // Escalação gravada ao encerrar; partidas antigas usam o elenco atual do time
-      for (const jid of p.escalacao?.[timeId] ?? elencos.get(timeId) ?? []) {
+      const escalados = new Set(p.escalacao?.[timeId] ?? elencos.get(timeId) ?? [])
+      if (p.goleiros?.[timeId]) escalados.add(p.goleiros[timeId])
+      for (const extraId of p.jogadoresExtras?.[timeId] ?? []) escalados.add(extraId)
+      for (const jid of escalados) {
         const s = get(jid)
         s.partidas++
         if (r === 'V') s.v++
