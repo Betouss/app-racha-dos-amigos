@@ -14,6 +14,7 @@ export interface EntradaSorteio {
   /** jogadorId → índice do time em que está travado */
   travados?: ReadonlyMap<Id, number>
   rng?: Rng
+  goleirosRotativos?: boolean
 }
 
 export interface TimeSorteado {
@@ -90,8 +91,9 @@ export function sortearTimes(entrada: EntradaSorteio): ResultadoSorteio {
   }
   pool.push(...goleirosLivres)
 
-  // Capacidade de linha: n, ou n + 1 quando o time não tem goleiro fixo
-  const vagas = times.map((t, i) => Math.max(0, jogadoresLinha + (t.goleiroId === null ? 1 : 0) - linha[i]))
+  // Capacidade de linha: n, ou n + 1 quando o time não tem goleiro fixo (se não for goleiro rotativo)
+  const rotativo = !!entrada.goleirosRotativos
+  const vagas = times.map((t, i) => Math.max(0, jogadoresLinha + (!rotativo && t.goleiroId === null ? 1 : 0) - linha[i]))
   const totalVagas = vagas.reduce((a, b) => a + b, 0)
 
   const embaralhado = shuffle(pool, rng)
@@ -120,11 +122,13 @@ export function sortearTimes(entrada: EntradaSorteio): ResultadoSorteio {
     }
   }
 
-  // Time sem goleiro fixo: sorteia um jogador de linha não travado para o gol
-  for (const t of times) {
-    if (t.goleiroId !== null || t.jogadores.length === 0) continue
-    const opcoes = t.jogadores.filter((id) => !travados.has(id))
-    t.goleiroId = pick(opcoes.length > 0 ? opcoes : t.jogadores, rng)
+  // Time sem goleiro fixo: sorteia um jogador de linha não travado para o gol (apenas se não for rotativo)
+  if (!rotativo) {
+    for (const t of times) {
+      if (t.goleiroId !== null || t.jogadores.length === 0) continue
+      const opcoes = t.jogadores.filter((id) => !travados.has(id))
+      t.goleiroId = pick(opcoes.length > 0 ? opcoes : t.jogadores, rng)
+    }
   }
 
   // Goleiro primeiro, depois por estrelas

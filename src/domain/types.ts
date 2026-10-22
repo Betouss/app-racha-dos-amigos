@@ -11,6 +11,9 @@ export interface Jogador {
   estrelas: number // 1–5
   goleiro: boolean
   ativo: boolean
+  gols?: number
+  golsHistoricos?: number
+  assistenciasHistoricas?: number
 }
 
 export type StatusRacha = 'aberto' | 'em_andamento' | 'encerrado'
@@ -30,6 +33,7 @@ export interface Racha {
   formato?: FormatoRacha // ausente = 'todos'
   golsParaVencer?: number // quem chegar primeiro a N gols vence; ausente ou 0 = sem limite
   sorteioEm?: number // epoch ms do último sorteio; avisa os convidados para mostrarem a animação
+  goleirosRotativos?: boolean // quando verdadeiro, se houver menos goleiros que times, o sorteio equilibra a linha igualmente e ativa o revezamento
   status: StatusRacha
 }
 
@@ -68,6 +72,11 @@ export interface Partida {
   // Quem estava em cada time ao fim da partida (timeId → jogadores). Gravado ao encerrar,
   // para que trocas posteriores não reescrevam o histórico. Ausente em partidas antigas.
   escalacao?: Record<Id, Id[]>
+  // Goleiro ativo de cada time nesta partida (timeId → jogadorId). Permite revezamento de goleiros
+  // ou goleiro emprestado de outro time.
+  goleiros?: Record<Id, Id>
+  // Jogadores emprestados/adicionais atuando por um time nesta partida (timeId → jogadorId[])
+  jogadoresExtras?: Record<Id, Id[]>
 }
 
 export interface Gol {

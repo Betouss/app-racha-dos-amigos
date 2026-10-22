@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { atualizarGol, definirGoleiro, desfazerGol, encerrarPartida, iniciarPartida, reabrirPartida, registrarGol } from '../data/acoes'
+import { atualizarGol, definirGoleiroPartida, adicionarJogadorNaPartida, desfazerGol, encerrarPartida, iniciarPartida, reabrirPartida, registrarGol } from '../data/acoes'
 import { useAgora, useTelaAcesa } from '../data/hooks'
 import { useAdmin, useCtx, useRacha } from '../data/store'
 import { goleiroQueSofreu, placar, timeDoGol, timeQueSofreu } from '../domain/stats'
@@ -26,6 +26,7 @@ export default function AoVivo() {
   const [assistDe, setAssistDe] = useState<Id | null>(null) // id do gol
   const [editando, setEditando] = useState<Id | null>(null)
   const [trocaGoleiro, setTrocaGoleiro] = useState<Id | null>(null) // time
+  const [emprestarPara, setEmprestarPara] = useState<Id | null>(null) // time
   const [confirmaFim, setConfirmaFim] = useState(false)
   const avisou = useRef(false)
 
@@ -64,18 +65,63 @@ export default function AoVivo() {
   }, [apitarAgora])
 
   if (!dados || !partida) return null
-  const { racha, times, gols, timeJogadores, jogadores, partidas } = dados
+  const { racha, times, gols, timeJogadores, jogadores, partidas, presencas } = dados
   const timeA = times.find((t) => t.id === partida.timeAId)!
   const timeB = times.find((t) => t.id === partida.timeBId)!
   const pl = placar(partida, gols)
   const lances = gols.filter((g) => g.partidaId === partidaId).sort((a, b) => b.criadoEm - a.criadoEm)
-  const elenco = (timeId: Id) =>
-    timeJogadores
-      .filter((tj) => tj.timeId === timeId)
-      .sort((a, b) => Number(a.goleiro) - Number(b.goleiro) || (jogadores.get(a.jogadorId)?.apelido ?? '').localeCompare(jogadores.get(b.jogadorId)?.apelido ?? ''))
-      .map((tj) => ({ ...jogadores.get(tj.jogadorId)!, goleiroNoJogo: tj.goleiro }))
+  const goleiroDoTime = (timeId: Id) =>
+    partida.goleiros?.[timeId] ?? timeJogadores.find((tj) => tj.timeId === timeId && tj.goleiro)?.jogadorId
+
+  const elenco = (timeId: Id) => {
+    const ids = new Set(timeJogadores.filter((tj) => tj.timeId === timeId).map((tj) => tj.jogadorId))
+    const gkPartida = partida.goleiros?.[timeId]
+    if (gkPartida) ids.add(gkPartida)
+    for (const extra of partida.jogadoresExtras?.[timeId] ?? []) ids.add(extra)
+    return [...ids]
+      .map((id) => {
+        const j = jogadores.get(id)
+        if (!j) return null
+        const isGk = id === goleiroDoTime(timeId)
+        return { ...j, goleiroNoJogo: isGk }
+      })
+      .filter((j): j is Jogador & { goleiroNoJogo: boolean } => j !== null)
+      .sort((a, b) => Number(b.goleiroNoJogo) - Number(a.goleiroNoJogo) || a.apelido.localeCompare(b.apelido))
+  }
   const outro = (timeId: Id) => (timeId === timeA.id ? timeB : timeA)
-  const goleiroDoTime = (timeId: Id) => timeJogadores.find((tj) => tj.timeId === timeId && tj.goleiro)?.jogadorId
+
+  // Goleiro do time que acabou de perder na partida anterior (para sugestão rápida de revezamento)
+  const sugestaoGoleiroPerdedor = (() => {
+    const encerradas = partidas.filter((p) => p.status === 'encerrada').sort((a, b) => b.ordem - a.ordem)
+    const ultima = encerradas[0]
+    if (!ultima) return null
+    const plUltima = placar(ultima, gols)
+    let timePerdedorId: Id
+    if (plUltima.a > plUltima.b) timePerdedorId = ultima.timeBId
+    else if (plUltima.b > plUltima.a) timePerdedorId = ultima.timeAId
+    else timePerdedorId = ultima.timeAId
+
+    const timePerdedor = times.find((t) => t.id === timePerdedorId)
+    const gkId =
+      ultima.goleiros?.[timePerdedorId] ??
+      timeJogadores.find((tj) => tj.timeId === timePerdedorId && tj.goleiro)?.jogadorId
+    const gk = gkId ? jogadores.get(gkId) : undefined
+    if (!gk || !timePerdedor) return null
+
+    // Verificar se algum dos times desta partida está sem goleiro
+    const gkA = goleiroDoTime(timeA.id)
+    const gkB = goleiroDoTime(timeB.id)
+
+    if (!gkA && gkB !== gk.id) return { goleiro: gk, timeAlvo: timeA, timeOrigem: timePerdedor }
+    if (!gkB && gkA !== gk.id) return { goleiro: gk, timeAlvo: timeB, timeOrigem: timePerdedor }
+
+    const emJogo = new Set([...elenco(timeA.id).map((j) => j.id), ...elenco(timeB.id).map((j) => j.id)])
+    if (!emJogo.has(gk.id)) {
+      return { goleiro: gk, timeAlvo: null, timeOrigem: timePerdedor }
+    }
+    return null
+  })()
+
   // Gols sofridos por goleiro, por time; o goleiro atual aparece mesmo sem ter sofrido gol
   const sofridos = (timeId: Id) => {
     const m = new Map<Id, number>()
@@ -88,7 +134,11 @@ export default function AoVivo() {
     }
     return { atual, porGoleiro: [...m.entries()] }
   }
-  const timeDoJogador = (jogadorId: Id) => (timeJogadores.find((tj) => tj.jogadorId === jogadorId && (tj.timeId === timeA.id || tj.timeId === timeB.id))?.timeId ?? timeA.id!)
+  const timeDoJogador = (jogadorId: Id) => {
+    if (elenco(timeA.id).some((j) => j.id === jogadorId)) return timeA.id
+    if (elenco(timeB.id).some((j) => j.id === jogadorId)) return timeB.id
+    return timeA.id
+  }
   const minutoAtual = Math.min(Math.floor(decorrido / 60000) + 1, racha.duracaoPartidaMin)
   const aoVivo = partida.status === 'em_andamento'
 
@@ -161,6 +211,27 @@ export default function AoVivo() {
           )}
         </section>
 
+        {admin && partida.status !== 'encerrada' && sugestaoGoleiroPerdedor?.timeAlvo && (
+          <div className="aviso" style={{ marginTop: 12, marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div style={{ minWidth: 0, fontSize: 14 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Icon name="luva" size={16} /> <b>{sugestaoGoleiroPerdedor.goleiro.apelido}</b>
+              </span>{' '}
+              acabou de sair pelo {sugestaoGoleiroPerdedor.timeOrigem.nome}. Escalar no gol do <b>{sugestaoGoleiroPerdedor.timeAlvo.nome}</b>?
+            </div>
+            <button
+              className="btn btn--sm"
+              style={{ whiteSpace: 'nowrap', padding: '6px 12px', fontSize: 13 }}
+              onClick={() => {
+                definirGoleiroPartida(ctx, partidaId, sugestaoGoleiroPerdedor.timeAlvo!.id, sugestaoGoleiroPerdedor.goleiro.id)
+                toast.mostrar({ texto: `${sugestaoGoleiroPerdedor.goleiro.apelido} no gol do ${sugestaoGoleiroPerdedor.timeAlvo!.nome}` })
+              }}
+            >
+              Escalar
+            </button>
+          </div>
+        )}
+
         {!admin ? null : partida.status === 'agendada' ? (
           <div className="acoes">
             <button className="btn" onClick={() => iniciarPartida(ctx, partidaId)}>
@@ -216,9 +287,17 @@ export default function AoVivo() {
           })}
         </div>
         {admin && partida.status !== 'encerrada' && racha.status !== 'encerrado' && (
-          <button className="link-btn" style={{ marginTop: 4 }} onClick={() => nav(`/racha/${rachaId}/sorteio`)}>
-            <Icon name="users" size={18} /> Trocar jogadores dos times
-          </button>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+            <button className="link-btn" onClick={() => setEmprestarPara(timeA.id)}>
+              <Icon name="mais" size={16} /> Emprestar para {timeA.nome}
+            </button>
+            <button className="link-btn" onClick={() => setEmprestarPara(timeB.id)}>
+              <Icon name="mais" size={16} /> Emprestar para {timeB.nome}
+            </button>
+            <button className="link-btn" onClick={() => nav(`/racha/${rachaId}/sorteio`)}>
+              <Icon name="users" size={16} /> Alterar times
+            </button>
+          </div>
         )}
 
         <div className="lances-head">
@@ -303,34 +382,136 @@ export default function AoVivo() {
           </>
         }
       >
-        {trocaGoleiro && (
+        {trocaGoleiro && (() => {
+          const timeAlvo = times.find((t) => t.id === trocaGoleiro)
+          const gkAtualId = goleiroDoTime(trocaGoleiro)
+          const jogadoresDoTime = elenco(trocaGoleiro)
+          const idsNoTime = new Set(jogadoresDoTime.map((j) => j.id))
+
+          // Outros goleiros presentes na pelada
+          const outrosGoleiros = [...jogadores.values()]
+            .filter((j) => (j.goleiro || j.id === sugestaoGoleiroPerdedor?.goleiro.id) && !idsNoTime.has(j.id))
+            .filter((j) => presencas.some((p) => p.jogadorId === j.id))
+
+          return (
+            <>
+              <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
+                Os próximos gols sofridos pelo {timeAlvo?.nome} contam para o novo goleiro.
+              </p>
+
+              {outrosGoleiros.length > 0 && (
+                <>
+                  <p className="label" style={{ margin: '8px 0 4px', fontSize: 12 }}>
+                    Goleiros de outros times / Revezamento
+                  </p>
+                  <div className="escolha" style={{ marginBottom: 14 }}>
+                    {outrosGoleiros.map((j) => {
+                      const ehSugerido = sugestaoGoleiroPerdedor?.goleiro.id === j.id
+                      const ehGkAtual = gkAtualId === j.id
+                      const timeOrigem = times.find((t) => timeJogadores.some((tj) => tj.timeId === t.id && tj.jogadorId === j.id))
+                      return (
+                        <button
+                          key={j.id}
+                          className={ehGkAtual ? 'on' : ''}
+                          onClick={() => {
+                            if (!ehGkAtual) {
+                              definirGoleiroPartida(ctx, partidaId, trocaGoleiro, j.id)
+                              toast.mostrar({ texto: `${j.apelido} agora está no gol do ${timeAlvo?.nome}` })
+                            }
+                            setTrocaGoleiro(null)
+                          }}
+                        >
+                          <Avatar jogador={j} size={36} />
+                          <span>
+                            {j.apelido}
+                            {ehSugerido && <small style={{ color: 'var(--brand)' }}>Acabou de sair · Sugerido</small>}
+                            {!ehSugerido && timeOrigem && <small>Goleiro do {timeOrigem.nome}</small>}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+
+              <p className="label" style={{ margin: '8px 0 4px', fontSize: 12 }}>
+                Jogadores do {timeAlvo?.nome}
+              </p>
+              <div className="escolha">
+                {jogadoresDoTime.map((j) => (
+                  <button
+                    key={j.id}
+                    className={j.goleiroNoJogo ? 'on' : ''}
+                    onClick={() => {
+                      if (!j.goleiroNoJogo) {
+                        definirGoleiroPartida(ctx, partidaId, trocaGoleiro, j.id)
+                        toast.mostrar({ texto: `${j.apelido} agora está no gol` })
+                      }
+                      setTrocaGoleiro(null)
+                    }}
+                  >
+                    <Avatar jogador={j} size={36} />
+                    <span>
+                      {j.apelido}
+                      {j.goleiroNoJogo && <small>goleiro atual</small>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )
+        })()}
+      </Sheet>
+
+      <Sheet
+        open={emprestarPara !== null}
+        onClose={() => setEmprestarPara(null)}
+        title={
           <>
-            <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-              Os próximos gols sofridos pelo {times.find((t) => t.id === trocaGoleiro)?.nome} contam para o novo goleiro.
-            </p>
-            <div className="escolha">
-              {elenco(trocaGoleiro).map((j) => (
-                <button
-                  key={j.id}
-                  className={j.goleiroNoJogo ? 'on' : ''}
-                  onClick={() => {
-                    if (!j.goleiroNoJogo) {
-                      definirGoleiro(ctx, trocaGoleiro, j.id)
-                      toast.mostrar({ texto: `${j.apelido} agora está no gol` })
-                    }
-                    setTrocaGoleiro(null)
-                  }}
-                >
-                  <Avatar jogador={j} size={36} />
-                  <span>
-                    {j.apelido}
-                    {j.goleiroNoJogo && <small>goleiro atual</small>}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <Icon name="users" /> Emprestar para o {times.find((t) => t.id === emprestarPara)?.nome}
           </>
-        )}
+        }
+      >
+        {emprestarPara && (() => {
+          const timeAlvo = times.find((t) => t.id === emprestarPara)!
+          const jaNoTime = new Set(elenco(emprestarPara).map((j) => j.id))
+          const disponiveis = [...jogadores.values()]
+            .filter((j) => !jaNoTime.has(j.id) && presencas.some((p) => p.jogadorId === j.id))
+            .sort((a, b) => a.apelido.localeCompare(b.apelido))
+
+          return (
+            <>
+              <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
+                O jogador entrará na escalação desta partida pelo {timeAlvo.nome} para completar a equipe.
+              </p>
+              {disponiveis.length === 0 ? (
+                <p className="hint">Nenhum jogador disponível para empréstimo.</p>
+              ) : (
+                <div className="escolha">
+                  {disponiveis.map((j) => {
+                    const timeOrigem = times.find((t) => timeJogadores.some((tj) => tj.timeId === t.id && tj.jogadorId === j.id))
+                    return (
+                      <button
+                        key={j.id}
+                        onClick={() => {
+                          adicionarJogadorNaPartida(ctx, partidaId, emprestarPara, j.id)
+                          toast.mostrar({ texto: `${j.apelido} emprestado para o ${timeAlvo.nome}` })
+                          setEmprestarPara(null)
+                        }}
+                      >
+                        <Avatar jogador={j} size={36} />
+                        <span>
+                          {j.apelido}
+                          {timeOrigem && <small>{timeOrigem.nome}</small>}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </>
+          )
+        })()}
       </Sheet>
 
       <EscolherAutor
