@@ -89,7 +89,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 body {
-  overscroll-behavior-y: none;
+  overflow-x: clip;
+  overscroll-behavior-y: contain;
 }
 button,
 input,
@@ -125,9 +126,11 @@ h2 {
 
 .app {
   max-width: 480px;
+  width: 100%;
   margin: 0 auto;
   min-height: 100dvh;
   position: relative;
+  overflow-x: clip;
 }
 /* --dock-h é a altura medida da barra fixa (ver Dock); os valores fixos são só o fallback */
 .page {
@@ -1962,10 +1965,6 @@ h2 {
 }
 .gol-btn b {
   text-transform: uppercase;
-}
-html,
-body {
-  overflow-x: hidden;
 }
 .placar__regra {
   text-align: center;
