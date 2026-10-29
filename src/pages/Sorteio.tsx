@@ -16,49 +16,66 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
   const [sel, setSel] = useState<Posicao | null>(null)
   const [sorteando, setSorteando] = useState(false)
   const [rodada, setRodada] = useState(0) // muda a cada sorteio para reanimar a revelação dos times
-  const primeiro = useRef(false)
-  const timer = useRef<number | undefined>(undefined)
+  const jaSorteouInicial = useRef(false)
   const meuSorteio = useRef<number | undefined>(undefined)
-  useEffect(() => () => window.clearTimeout(timer.current), [])
+  const sorteioVisto = useRef<number | undefined>(undefined)
+  const primeiraCargaConcluida = useRef(false)
+  const ctxRef = useRef(ctx)
+  useEffect(() => {
+    ctxRef.current = ctx
+  }, [ctx])
 
-  const mostrarSuspense = useCallback((aoFim: () => void) => {
-    setSel(null)
-    setSorteando(true)
-    window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => {
-      aoFim()
+  // Desativa a animação de suspense após a duração padrão
+  useEffect(() => {
+    if (!sorteando) return
+    const t = window.setTimeout(() => {
       setRodada((r) => r + 1)
       setSorteando(false)
     }, DURACAO_SORTEIO())
-  }, [])
+    return () => window.clearTimeout(t)
+  }, [sorteando])
 
-  // Suspense: mostra a animação e só sorteia no fim, para os times aparecerem já prontos
-  const sortearComSuspense = useCallback(() => {
-    mostrarSuspense(() => {
-      meuSorteio.current = sortear(ctx, rachaId)
-    })
-  }, [ctx, rachaId, mostrarSuspense])
+  // Realiza o sorteio imediatamente nos dados e ativa a animação de suspense
+  const realizarSorteio = useCallback(() => {
+    setSel(null)
+    setSorteando(true)
+    try {
+      const marca = sortear(ctxRef.current, rachaId)
+      if (marca !== undefined) {
+        meuSorteio.current = marca
+        sorteioVisto.current = marca
+      }
+    } catch (err) {
+      console.error('Erro ao realizar sorteio:', err)
+      setSorteando(false)
+    }
+  }, [rachaId])
 
-  // Quem acompanha (convidado ou outro admin) vê a mesma animação quando chega um sorteio novo.
-  // O resultado já chegou junto, mas fica coberto pela animação até a revelação.
+  // Quem acompanha (convidado ou outro admin) vê a animação APENAS quando chega um sorteio novo
+  // após a página já estar aberta, evitando loops na montagem inicial ou em reloads.
   const sorteioEm = dados?.racha.sorteioEm
-  const sorteioVisto = useRef(sorteioEm)
   useEffect(() => {
-    if (sorteioEm === sorteioVisto.current) return
+    if (!sorteioEm) return
+    // Na primeira carga, memoriza o sorteioEm existente sem acionar o suspense
+    if (!primeiraCargaConcluida.current) {
+      primeiraCargaConcluida.current = true
+      sorteioVisto.current = sorteioEm
+      return
+    }
+    // Se não houve alteração no timestamp ou se foi este dispositivo que realizou o sorteio, ignora
+    if (sorteioEm === sorteioVisto.current || sorteioEm === meuSorteio.current) return
     sorteioVisto.current = sorteioEm
-    if (!sorteioEm || sorteioEm === meuSorteio.current) return
-    // Sorteio antigo (ex.: a tela acabou de abrir): não anima
-    if (Date.now() - sorteioEm > 15_000) return
-    mostrarSuspense(() => {})
-  }, [sorteioEm, mostrarSuspense])
+    setSel(null)
+    setSorteando(true)
+  }, [sorteioEm])
 
-  // Pelada aberta ainda sem times: faz o primeiro sorteio
+  // Pelada aberta ainda sem times: faz o primeiro sorteio assim que os dados estiverem disponíveis
   const precisaSortear = admin && !!dados && dados.racha.status === 'aberto' && dados.times.length === 0 && dados.presencas.length > 0
   useEffect(() => {
-    if (!precisaSortear || primeiro.current) return
-    primeiro.current = true
-    sortearComSuspense()
-  }, [precisaSortear, sortearComSuspense])
+    if (!precisaSortear || jaSorteouInicial.current) return
+    jaSorteouInicial.current = true
+    realizarSorteio()
+  }, [precisaSortear, realizarSorteio])
 
   if (dados === undefined) return null
   if (dados === null) return <main className="page">Pelada não encontrada.</main>
@@ -82,7 +99,7 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
     setSel(p)
   }
 
-  const resortear = sortearComSuspense
+  const resortear = realizarSorteio
 
   const confirmar = () => {
     confirmarTimes(ctx, rachaId)
@@ -139,6 +156,17 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
                 Cancelar
               </button>
             </div>
+          </div>
+        )}
+
+        {times.length === 0 && !sorteando && (
+          <div className="aviso" style={{ textAlign: 'center', margin: '24px 0', padding: 20 }}>
+            <p style={{ margin: 0, fontWeight: 600 }}>Nenhum time sorteado ainda.</p>
+            {editavel && (
+              <button className="btn" style={{ marginTop: 12 }} onClick={realizarSorteio}>
+                <Icon name="sorteio" /> Sortear times
+              </button>
+            )}
           </div>
         )}
 
@@ -307,6 +335,10 @@ export default function Sorteio({ rachaId }: { rachaId: Id }) {
         <SorteandoTimes
           nomes={presencas.map((p) => jogadores.get(p.jogadorId)?.apelido ?? '').filter(Boolean)}
           cores={Array.from({ length: racha.qtdTimes }, (_, i) => times[i]?.cor ?? nomeTime(i).cor)}
+          onPular={() => {
+            setRodada((r) => r + 1)
+            setSorteando(false)
+          }}
         />
       )}
     </>
@@ -319,7 +351,7 @@ const DURACAO_SORTEIO = () => (reduzMovimento() ? 700 : 2600)
 const FASES = ['Embaralhando jogadores', 'Equilibrando as estrelas', 'Escolhendo os goleiros', 'Fechando os times']
 
 /** Tela de suspense do sorteio: nomes girando como num caça-níquel, cores dos times pulsando. */
-function SorteandoTimes({ nomes, cores }: { nomes: string[]; cores: string[] }) {
+function SorteandoTimes({ nomes, cores, onPular }: { nomes: string[]; cores: string[]; onPular?: () => void }) {
   const [nome, setNome] = useState(0)
   const [fase, setFase] = useState(0)
 
@@ -363,6 +395,16 @@ function SorteandoTimes({ nomes, cores }: { nomes: string[]; cores: string[] }) 
       <p className="sorteando__fase" key={fase}>
         {FASES[fase]}
       </p>
+      {onPular && (
+        <button
+          type="button"
+          className="btn btn--sm btn--ghost"
+          style={{ position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', zIndex: 100, color: 'rgba(255,255,255,0.85)', background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(4px)', borderColor: 'rgba(255,255,255,0.2)' }}
+          onClick={onPular}
+        >
+          Ver times agora
+        </button>
+      )}
     </div>
   )
 }

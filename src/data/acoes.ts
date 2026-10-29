@@ -76,12 +76,14 @@ export function sortear(ctx: Ctx, rachaId: Id): number | undefined {
   const { gid, base } = ctx
   const racha = base.rachas.find((r) => r.id === rachaId)
   if (!racha) return
-  const l = new Lote()
-  const sorteioEm = Date.now()
-  l.update(ref(gid, 'rachas', rachaId), { sorteioEm })
   const presencas = base.presencas.filter((p) => p.rachaId === rachaId)
   const porId = new Map(base.jogadores.map((j) => [j.id, j]))
   const jogadores = presencas.map((p) => porId.get(p.jogadorId)).filter((j) => !!j)
+  if (jogadores.length === 0) return
+
+  const l = new Lote()
+  const sorteioEm = Date.now()
+  l.update(ref(gid, 'rachas', rachaId), { sorteioEm })
 
   let times = base.times.filter((t) => t.rachaId === rachaId)
   let atuais = base.timeJogadores.filter((tj) => times.some((t) => t.id === tj.timeId))
@@ -108,8 +110,10 @@ export function sortear(ctx: Ctx, rachaId: Id): number | undefined {
 
   const novos = new Set<string>()
   r.times.forEach((t, i) => {
+    const timeRef = times[i]
+    if (!timeRef) return
+    const tid = timeRef.id
     for (const jogadorId of t.jogadores) {
-      const tid = times[i].id
       novos.add(timeJogadorId(tid, jogadorId))
       l.set(ref(gid, 'timeJogadores', timeJogadorId(tid, jogadorId)), { timeId: tid, jogadorId, travado: travados.has(jogadorId), goleiro: jogadorId === t.goleiroId })
     }
@@ -307,11 +311,53 @@ export function adicionarRodada(ctx: Ctx, rachaId: Id) {
   l.enviar()
 }
 
-export function iniciarPartida({ gid, base }: Ctx, partidaId: Id) {
+export function iniciarPartida({ gid, base }: Ctx, partidaId: Id, novosTimes?: { timeAId: Id; timeBId: Id }) {
   const p = base.partidas.find((x) => x.id === partidaId)
   if (!p || p.status !== 'agendada') return
   const l = new Lote()
-  l.update(ref(gid, 'partidas', partidaId), { status: 'em_andamento', iniciadaEm: Date.now() })
+  const dados: Partial<Partida> = { status: 'em_andamento', iniciadaEm: Date.now() }
+  if (novosTimes && novosTimes.timeAId !== novosTimes.timeBId) {
+    dados.timeAId = novosTimes.timeAId
+    dados.timeBId = novosTimes.timeBId
+  }
+  l.update(ref(gid, 'partidas', partidaId), dados)
+  l.enviar()
+}
+
+/** Altera os dois times de uma partida (seja agendada, em andamento ou encerrada). */
+export function editarTimesPartida(ctx: Ctx, partidaId: Id, timeAId: Id, timeBId: Id) {
+  const { gid, base } = ctx
+  const p = base.partidas.find((x) => x.id === partidaId)
+  if (!p || timeAId === timeBId) return
+  const oldA = p.timeAId
+  const oldB = p.timeBId
+  if (oldA === timeAId && oldB === timeBId) return
+
+  const l = new Lote()
+  const pAtualizada: Partida = { ...p, timeAId, timeBId }
+  const dados: Partial<Partida> = { timeAId, timeBId }
+
+  if (p.status === 'encerrada') {
+    dados.escalacao = escalacaoAtual(base, pAtualizada)
+    const novosGoleiros: Record<Id, Id> = {}
+    for (const tid of [timeAId, timeBId]) {
+      const gk = p.goleiros?.[tid] ?? base.timeJogadores.find((tj) => tj.timeId === tid && tj.goleiro)?.jogadorId
+      if (gk) novosGoleiros[tid] = gk
+    }
+    dados.goleiros = novosGoleiros
+  }
+
+  // Remapeia gols existentes caso pertençam aos times antigos
+  for (const g of base.gols) {
+    if (g.partidaId !== partidaId) continue
+    if (g.timeId === oldA && oldA !== timeAId) {
+      l.update(ref(gid, 'gols', g.id), { timeId: timeAId })
+    } else if (g.timeId === oldB && oldB !== timeBId) {
+      l.update(ref(gid, 'gols', g.id), { timeId: timeBId })
+    }
+  }
+
+  l.update(ref(gid, 'partidas', partidaId), dados)
   l.enviar()
 }
 

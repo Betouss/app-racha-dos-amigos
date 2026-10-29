@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { atualizarGol, definirGoleiroPartida, adicionarJogadorNaPartida, desfazerGol, encerrarPartida, iniciarPartida, reabrirPartida, registrarGol } from '../data/acoes'
+import {
+  atualizarGol,
+  definirGoleiroPartida,
+  adicionarJogadorNaPartida,
+  desfazerGol,
+  editarTimesPartida,
+  encerrarPartida,
+  iniciarPartida,
+  reabrirPartida,
+  registrarGol,
+} from '../data/acoes'
 import { useAgora, useTelaAcesa } from '../data/hooks'
 import { useAdmin, useCtx, useRacha } from '../data/store'
 import { goleiroQueSofreu, placar, timeDoGol, timeQueSofreu } from '../domain/stats'
+import { vencedorFica } from '../domain/vencedorFica'
 import type { Gol, Id, Jogador, Time } from '../domain/types'
 import { Avatar, Confirmar, Dock, Sheet, Stepper, TeamDot, teamStyle, useToast, Voltar } from '../ui/components'
+import { EscolherTimesPartida } from '../ui/EscolherTimesPartida'
 import { apitarFim } from '../ui/apito'
 import { mmss } from '../ui/datas'
 import { Icon } from '../ui/Icon'
@@ -28,6 +40,8 @@ export default function AoVivo() {
   const [trocaGoleiro, setTrocaGoleiro] = useState<Id | null>(null) // time
   const [emprestarPara, setEmprestarPara] = useState<Id | null>(null) // time
   const [confirmaFim, setConfirmaFim] = useState(false)
+  const [editandoTimes, setEditandoTimes] = useState(false)
+  const [iniciarAposEmpate, setIniciarAposEmpate] = useState(false)
   const avisou = useRef(false)
 
   const partida = dados?.partidas.find((p) => p.id === partidaId)
@@ -142,6 +156,38 @@ export default function AoVivo() {
   const minutoAtual = Math.min(Math.floor(decorrido / 60000) + 1, racha.duracaoPartidaMin)
   const aoVivo = partida.status === 'em_andamento'
 
+  const encerradas = partidas.filter((p) => p.status === 'encerrada').sort((a, b) => b.ordem - a.ordem)
+  const ultima = encerradas.find((p) => p.ordem < partida.ordem)
+  const ultimoEmpatou = (() => {
+    if (!ultima || partida.status !== 'agendada') return false
+    const plUltima = placar(ultima, gols)
+    return plUltima.a === plUltima.b
+  })()
+
+  const comecar = () => {
+    if (ultimoEmpatou) {
+      setIniciarAposEmpate(true)
+      setEditandoTimes(true)
+      return
+    }
+    iniciarPartida(ctx, partidaId)
+  }
+
+  const filaTimes = (() => {
+    if (racha.formato !== 'vencedor_fica') return []
+    const indice = new Map(times.map((t, i) => [t.id, i]))
+    const jogosAnteriores = partidas
+      .filter((p) => p.status === 'encerrada' && p.ordem < partida.ordem)
+      .sort((a, b) => a.ordem - b.ordem)
+      .map((p) => {
+        const pl = placar(p, gols)
+        const a = indice.get(p.timeAId)!
+        const b = indice.get(p.timeBId)!
+        return { a, b, vencedor: pl.a > pl.b ? a : pl.b > pl.a ? b : null }
+      })
+    return vencedorFica(times.length, jogosAnteriores).fila.map((i) => times[i])
+  })()
+
   const marcar = (beneficiado: Time, autor: Jogador, contra: boolean) => {
     setGolDe(null)
     const id = registrarGol(ctx, {
@@ -150,7 +196,7 @@ export default function AoVivo() {
       timeId: contra ? outro(beneficiado.id).id : beneficiado.id,
       contra,
       goleiroId: goleiroDoTime(outro(beneficiado.id).id),
-      minuto: partida.iniciadaEm ? minutoAtual : undefined,
+      minuto: partida.iniciadaEm ? minutoAtual : (racha.duracaoPartidaMin || undefined),
     })
     navigator.vibrate?.(60)
     toast.mostrar({
@@ -178,7 +224,26 @@ export default function AoVivo() {
               Partida {partida.ordem}
               {racha.formato === 'vencedor_fica' ? '' : ` de ${partidas.length}`}
             </span>
-            {aoVivo ? <span className="chip chip--live">Ao vivo</span> : <span className="chip">{partida.status === 'encerrada' ? 'Encerrada' : 'Agendada'}</span>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {admin && partida.status === 'encerrada' && (
+                <button
+                  type="button"
+                  className="link-btn"
+                  style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  onClick={() => {
+                    setIniciarAposEmpate(false)
+                    setEditandoTimes(true)
+                  }}
+                >
+                  <Icon name="troca" size={14} /> Alterar times
+                </button>
+              )}
+              {aoVivo ? (
+                <span className="chip chip--live">Ao vivo</span>
+              ) : (
+                <span className="chip">{partida.status === 'encerrada' ? 'Encerrada' : 'Agendada'}</span>
+              )}
+            </div>
           </div>
           <div className="placar__times">
             <span className="placar__nome" style={teamStyle(timeA.cor)}>
@@ -233,15 +298,30 @@ export default function AoVivo() {
         )}
 
         {!admin ? null : partida.status === 'agendada' ? (
-          <div className="acoes">
-            <button className="btn" onClick={() => iniciarPartida(ctx, partidaId)}>
+          <div className="acoes" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 10 }}>
+            <button className="btn" onClick={comecar}>
               <Icon name="play" /> Começar partida
+            </button>
+            <button
+              className="btn btn--outline"
+              onClick={() => {
+                setIniciarAposEmpate(false)
+                setEditandoTimes(true)
+              }}
+            >
+              <Icon name="troca" /> Alterar times
             </button>
           </div>
         ) : (
           <div className="gol-btns">
             {[timeA, timeB].map((t) => (
-              <button key={t.id} className="gol-btn" style={teamStyle(t.cor)} onClick={() => setGolDe(t.id!)} disabled={!aoVivo}>
+              <button
+                key={t.id}
+                className="gol-btn"
+                style={teamStyle(t.cor)}
+                onClick={() => setGolDe(t.id!)}
+                disabled={!aoVivo && (!admin || partida.status !== 'encerrada')}
+              >
                 <Icon name="bola" size={34} />
                 <b>Gol</b>
                 <small>{t.nome}</small>
@@ -553,6 +633,32 @@ export default function AoVivo() {
           times={[timeA, timeB]}
           goleiroDoTime={goleiroDoTime}
           onFechar={() => setEditando(null)}
+        />
+      )}
+
+      {editandoTimes && (
+        <EscolherTimesPartida
+          aberto={true}
+          partida={partida}
+          times={times}
+          fila={filaTimes}
+          ultimoJogoEmpatou={iniciarAposEmpate}
+          aoIniciar={iniciarAposEmpate}
+          onConfirmar={(novoTimeA, novoTimeB) => {
+            if (iniciarAposEmpate) {
+              iniciarPartida(ctx, partidaId, { timeAId: novoTimeA, timeBId: novoTimeB })
+              toast.mostrar({ texto: 'Partida iniciada!' })
+            } else {
+              editarTimesPartida(ctx, partidaId, novoTimeA, novoTimeB)
+              toast.mostrar({ texto: 'Times da partida atualizados!' })
+            }
+            setEditandoTimes(false)
+            setIniciarAposEmpate(false)
+          }}
+          onFechar={() => {
+            setEditandoTimes(false)
+            setIniciarAposEmpate(false)
+          }}
         />
       )}
     </>

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { seeded } from './random'
 import { somaEstrelas, sortearTimes, type JogadorSorteio } from './sorteio'
 import { gerarTabela } from './tabela'
-import { vencedorFica } from './vencedorFica'
+import { opcoesConfrontoEmpate, vencedorFica } from './vencedorFica'
 import { artilharia, classificacao, goleiroQueSofreu, placar, statsPorJogador } from './stats'
 import type { Gol, Jogador, Partida, Racha, Time, TimeJogador } from './types'
 
@@ -207,6 +207,34 @@ describe('quem ganha fica', () => {
   it('com 2 times é sempre o mesmo confronto', () => {
     expect(vencedorFica(2, [{ a: 0, b: 1, vencedor: 0 }]).proximo).toEqual([0, 1])
   })
+
+  it('4 times: quando empata e saem os dois que empataram, entram os dois de fora e a fila é preservada', () => {
+    // Jogo 1: 0×1 empata. Decidido que entram os dois de fora: 2×3
+    // Jogo 2: 2×3, time 2 vence
+    const r = vencedorFica(4, [
+      { a: 0, b: 1, vencedor: null },
+      { a: 2, b: 3, vencedor: 2 },
+    ])
+    // Quem estava de fora eram 0 e 1. Como 3 perdeu no jogo 2, ele vai pro fim da fila [0, 1, 3]
+    // O próximo a entrar da fila é 0, enfrentando o vencedor 2!
+    expect(r.proximo).toEqual([2, 0])
+    expect(r.fila).toEqual([1, 3])
+  })
+
+  it('opcoesConfrontoEmpate sugere entrar os 2 de fora quando há 4 times', () => {
+    const opts = opcoesConfrontoEmpate(4, [2, 3], { a: 0, b: 1 })
+    expect(opts).toHaveLength(3)
+    expect(opts[0]).toEqual({ tipo: 'dois_fora', times: [2, 3] })
+    expect(opts[1]).toEqual({ tipo: 'fica_a', times: [0, 2] })
+    expect(opts[2]).toEqual({ tipo: 'fica_b', times: [1, 2] })
+  })
+
+  it('opcoesConfrontoEmpate sugere apenas quem continua quando há 3 times', () => {
+    const opts = opcoesConfrontoEmpate(3, [2], { a: 0, b: 1 })
+    expect(opts).toHaveLength(2)
+    expect(opts[0]).toEqual({ tipo: 'fica_a', times: [0, 2] })
+    expect(opts[1]).toEqual({ tipo: 'fica_b', times: [1, 2] })
+  })
 })
 
 describe('gols históricos de peladas anteriores', () => {
@@ -311,5 +339,43 @@ describe('goleiros rotativos e flexibilidade de partidas', () => {
     expect(s.get('gkRotativo')?.d).toBe(1) // Time B perdeu de 1x0
     expect(s.get('gkA')?.golsSofridos).toBe(0)
     expect(s.get('gkA')?.v).toBe(1)
+  })
+
+  it('quando uma partida encerrada tem seus times alterados, a classificação reflete os novos times', () => {
+    const times: Time[] = [
+      { id: 't1', rachaId: 'r1', nome: 'Time 1', cor: 'azul', ordem: 0 },
+      { id: 't2', rachaId: 'r1', nome: 'Time 2', cor: 'vermelho', ordem: 1 },
+      { id: 't3', rachaId: 'r1', nome: 'Time 3', cor: 'verde', ordem: 2 },
+    ]
+    const pOriginal: Partida = {
+      id: 'p1',
+      rachaId: 'r1',
+      timeAId: 't1',
+      timeBId: 't2',
+      ordem: 1,
+      status: 'encerrada',
+    }
+    const golOriginal: Gol = {
+      id: 'g1',
+      partidaId: 'p1',
+      timeId: 't1',
+      jogadorId: 'j1',
+      contra: false,
+      criadoEm: 1000,
+    }
+
+    // Antes da edição: T1 venceu T2 por 1x0
+    const classifAntes = classificacao('r1', times, [pOriginal], [golOriginal])
+    expect(classifAntes.find((l) => l.timeId === 't1')?.pts).toBe(3)
+    expect(classifAntes.find((l) => l.timeId === 't2')?.j).toBe(1)
+    expect(classifAntes.find((l) => l.timeId === 't3')?.j).toBe(0)
+
+    // Edição: o adversário era na verdade o Time 3 (t3), e não o Time 2 (t2)
+    const pEditada: Partida = { ...pOriginal, timeBId: 't3' }
+    const classifDepois = classificacao('r1', times, [pEditada], [golOriginal])
+    expect(classifDepois.find((l) => l.timeId === 't1')?.pts).toBe(3)
+    expect(classifDepois.find((l) => l.timeId === 't2')?.j).toBe(0)
+    expect(classifDepois.find((l) => l.timeId === 't3')?.j).toBe(1)
+    expect(classifDepois.find((l) => l.timeId === 't3')?.d).toBe(1)
   })
 })
