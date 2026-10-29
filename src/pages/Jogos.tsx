@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { adicionarRodada, encerrarRacha, iniciarPartida } from '../data/acoes'
+import { adicionarRodada, editarTimesPartida, encerrarRacha, iniciarPartida } from '../data/acoes'
 import { useAdmin, useCtx, useRacha } from '../data/store'
-import type { Id } from '../domain/types'
+import type { Id, Partida } from '../domain/types'
 import { somaEstrelas } from '../domain/sorteio'
 import { placar } from '../domain/stats'
 import { vencedorFica } from '../domain/vencedorFica'
 import { compartilharTexto, Confirmar, Dock, TeamDot, TeamName } from '../ui/components'
+import { EscolherTimesPartida } from '../ui/EscolherTimesPartida'
 import { diaCurto } from '../ui/datas'
 import { Icon } from '../ui/Icon'
 
@@ -18,6 +19,8 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
   const admin = useAdmin()
   const nav = useNavigate()
   const [confirmando, setConfirmando] = useState(false)
+  const [partidaParaEscolher, setPartidaParaEscolher] = useState<Partida | null>(null)
+  const [iniciarAposEscolha, setIniciarAposEscolha] = useState(false)
   if (dados === undefined) return null
   if (dados === null) return <main className="page">Pelada não encontrada.</main>
   const { racha, times, partidas, gols, timeJogadores, jogadores } = dados
@@ -61,9 +64,38 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
     return vencedorFica(times.length, aoVivo ? jogos.slice(0, -1) : jogos).fila.map((i) => times[i])
   })()
 
+  const ultimaEncerrada = jogadas.length > 0 ? jogadas[jogadas.length - 1] : undefined
+  const ultimoEmpatou = (() => {
+    if (!ultimaEncerrada) return false
+    const pl = placar(ultimaEncerrada, gols)
+    return pl.a === pl.b
+  })()
+
   const abrir = (partidaId: Id) => {
-    if (admin) iniciarPartida(ctx, partidaId)
+    const p = partidas.find((x) => x.id === partidaId)
+    if (!p) return
+    if (admin && p.status === 'agendada' && ultimoEmpatou) {
+      setPartidaParaEscolher(p)
+      setIniciarAposEscolha(true)
+      return
+    }
+    if (admin && p.status === 'agendada') {
+      iniciarPartida(ctx, partidaId)
+    }
     nav(`/racha/${rachaId}/partida/${partidaId}`)
+  }
+
+  const confirmarEscolhaTimes = (timeAId: Id, timeBId: Id) => {
+    if (!partidaParaEscolher) return
+    const pid = partidaParaEscolher.id
+    if (iniciarAposEscolha) {
+      iniciarPartida(ctx, pid, { timeAId, timeBId })
+      setPartidaParaEscolher(null)
+      nav(`/racha/${rachaId}/partida/${pid}`)
+    } else {
+      editarTimesPartida(ctx, pid, timeAId, timeBId)
+      setPartidaParaEscolher(null)
+    }
   }
 
   // No quem ganha fica a próxima partida é só a sequência natural: não conta como descartada
@@ -138,6 +170,30 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
             <div style={{ fontSize: 14 }}>
               {jogadas.length} jogada{jogadas.length === 1 ? '' : 's'} · {golsAteAgora} gol{golsAteAgora === 1 ? '' : 's'} até agora
             </div>
+            {admin && proxima.status === 'agendada' && (
+              <div style={{ marginTop: 8 }}>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="link-btn"
+                  style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setPartidaParaEscolher(proxima)
+                    setIniciarAposEscolha(false)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.stopPropagation()
+                      setPartidaParaEscolher(proxima)
+                      setIniciarAposEscolha(false)
+                    }
+                  }}
+                >
+                  <Icon name="troca" size={14} /> Alterar times
+                </span>
+              </div>
+            )}
           </button>
         )}
 
@@ -238,6 +294,19 @@ export default function Jogos({ rachaId }: { rachaId: Id }) {
         )}
         {aoVivo && <> A partida {aoVivo.ordem}, que está ao vivo, termina com o placar atual.</>}
       </Confirmar>
+
+      {partidaParaEscolher && (
+        <EscolherTimesPartida
+          aberto={true}
+          partida={partidaParaEscolher}
+          times={times}
+          fila={fila}
+          ultimoJogoEmpatou={ultimoEmpatou && partidaParaEscolher.ordem === (ultimaEncerrada ? ultimaEncerrada.ordem + 1 : 1)}
+          aoIniciar={iniciarAposEscolha}
+          onConfirmar={confirmarEscolhaTimes}
+          onFechar={() => setPartidaParaEscolher(null)}
+        />
+      )}
     </>
   )
 }

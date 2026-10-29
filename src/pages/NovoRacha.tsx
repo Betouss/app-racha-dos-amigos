@@ -15,6 +15,27 @@ function proximoSabado(): string {
   return isoLocal(d)
 }
 
+function extrairHora(iso: string): string {
+  const parts = iso.split('T')
+  return parts[1]?.slice(0, 5) ?? '08:00'
+}
+
+function calcularHoraFim(horaInicio: string, duracaoMin: number): string {
+  const [h, m] = (horaInicio || '08:00').split(':').map(Number)
+  const totalMin = (h || 0) * 60 + (m || 0) + duracaoMin
+  const finalH = Math.floor(totalMin / 60) % 24
+  const finalM = totalMin % 60
+  return `${String(finalH).padStart(2, '0')}:${String(finalM).padStart(2, '0')}`
+}
+
+function calcularDuracaoMin(horaInicio: string, horaFim: string): number {
+  const [h1, m1] = (horaInicio || '08:00').split(':').map(Number)
+  const [h2, m2] = (horaFim || '09:30').split(':').map(Number)
+  let diff = (h2 * 60 + m2) - (h1 * 60 + m1)
+  if (diff <= 0) diff += 24 * 60
+  return Math.max(30, diff)
+}
+
 const ordenarElenco = (a: Jogador, b: Jogador) => Number(b.goleiro) - Number(a.goleiro) || a.apelido.localeCompare(b.apelido, 'pt-BR')
 
 export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
@@ -26,19 +47,23 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
     if (rachaId) {
       return { racha: base.rachas.find((r) => r.id === rachaId), presentes: base.presencas.filter((p) => p.rachaId === rachaId).map((p) => p.jogadorId) }
     }
-    return { racha: base.rachas[0], presentes: [] as Id[] } // rachas vêm do mais recente para o mais antigo
+    return { racha: base.rachas[0], presentes: [] as Id[] }
   }, [base, rachaId])
 
+  const [etapa, setEtapa] = useState<1 | 2 | 3>(1)
   const [data, setData] = useState(proximoSabado)
   const [local, setLocal] = useState('')
+  const [horaInicio, setHoraInicio] = useState(() => extrairHora(proximoSabado()))
+  const [duracaoRacha, setDuracaoRacha] = useState(90)
+  const [horaFim, setHoraFim] = useState(() => calcularHoraFim(extrairHora(proximoSabado()), 90))
   const [linha, setLinha] = useState(5)
   const [qtdTimes, setQtdTimes] = useState(2)
-  const [duracaoRacha, setDuracaoRacha] = useState(90)
   const [duracaoPartida, setDuracaoPartida] = useState(10)
   const [idaVolta, setIdaVolta] = useState(false)
   const [formato, setFormato] = useState<FormatoRacha>('todos')
   const [golsParaVencer, setGolsParaVencer] = useState(0)
   const [presentes, setPresentes] = useState<Set<Id>>(new Set())
+  const [buscaJogador, setBuscaJogador] = useState('')
   const [carregado, setCarregado] = useState(false)
   const [salvando, setSalvando] = useState(false)
   const [cancelando, setCancelando] = useState(false)
@@ -48,7 +73,12 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
     if (!anterior || carregado) return
     const r = anterior.racha
     if (r) {
-      if (rachaId) setData(r.data)
+      if (rachaId) {
+        setData(r.data)
+        const hIni = extrairHora(r.data)
+        setHoraInicio(hIni)
+        setHoraFim(calcularHoraFim(hIni, r.duracaoRachaMin))
+      }
       setLocal(r.local)
       setLinha(r.jogadoresLinha)
       setQtdTimes(r.qtdTimes)
@@ -67,7 +97,6 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
   const confirmados = presentes.size
   const minimo = qtdTimes * 2
   const vencedorFica = formato === 'vencedor_fica'
-  // Quem ganha fica não tem tabela fechada: estima quantas partidas cabem no tempo da pelada
   const partidas = vencedorFica ? Math.max(1, Math.floor(duracaoRacha / duracaoPartida)) : ((qtdTimes * (qtdTimes - 1)) / 2) * (idaVolta ? 2 : 1)
   const minutosDeJogo = partidas * duracaoPartida
   const goleiros = useMemo(() => elenco.filter((j) => j.goleiro && presentes.has(j.id)).length, [elenco, presentes])
@@ -89,20 +118,56 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
     setPresentes(s)
   }
 
+  const aoMudarHoraInicio = (novaHora: string) => {
+    setHoraInicio(novaHora)
+    const dataPartes = data.split('T')[0]
+    setData(`${dataPartes}T${novaHora}`)
+    setHoraFim(calcularHoraFim(novaHora, duracaoRacha))
+  }
+
+  const aoMudarHoraFim = (novaHoraFim: string) => {
+    setHoraFim(novaHoraFim)
+    const novaDuracao = calcularDuracaoMin(horaInicio, novaHoraFim)
+    setDuracaoRacha(novaDuracao)
+  }
+
+  const aoMudarDuracao = (novaDuracao: number) => {
+    setDuracaoRacha(novaDuracao)
+    setHoraFim(calcularHoraFim(horaInicio, novaDuracao))
+  }
+
   const ano = deIso(data).getFullYear()
   const dataValida = ano >= 2000 && ano <= 2100
-  const podeSeguir = local.trim().length > 0 && confirmados >= minimo && dataValida && !salvando
+  const podeSalvarBasico = local.trim().length > 0 && dataValida && !salvando
+  const podeIrSorteio = podeSalvarBasico && confirmados >= minimo
 
-  // O sorteio é feito pela tela de sorteio quando o racha ainda não tem times
-  const seguir = () => {
+  const salvarEProsseguir = (destino: 'home' | 'sorteio' | 'proxima_etapa') => {
+    if (!podeSalvarBasico) return
     setSalvando(true)
     const id = salvarRacha(
       ctx,
-      { data, local: local.trim(), jogadoresLinha: linha, qtdTimes, duracaoRachaMin: duracaoRacha, duracaoPartidaMin: duracaoPartida, idaVolta: !vencedorFica && idaVolta, formato, golsParaVencer },
+      {
+        data,
+        local: local.trim(),
+        jogadoresLinha: linha,
+        qtdTimes,
+        duracaoRachaMin: duracaoRacha,
+        duracaoPartidaMin: duracaoPartida,
+        idaVolta: !vencedorFica && idaVolta,
+        formato,
+        golsParaVencer,
+      },
       [...presentes],
       rachaId,
     )
-    nav(`/racha/${id}/sorteio`, { replace: !!rachaId })
+    if (destino === 'home') {
+      nav('/', { replace: true })
+    } else if (destino === 'sorteio') {
+      nav(`/racha/${id}/sorteio`, { replace: !!rachaId })
+    } else {
+      setSalvando(false)
+      setEtapa((e) => (e < 3 ? ((e + 1) as 2 | 3) : 3))
+    }
   }
 
   const cancelar = () => {
@@ -111,196 +176,330 @@ export default function NovoRacha({ rachaId }: { rachaId?: Id }) {
     nav('/', { replace: true })
   }
 
+  const elencoFiltrado = useMemo(() => {
+    if (!buscaJogador.trim()) return elenco
+    const termo = buscaJogador.toLowerCase()
+    return elenco.filter((j) => j.apelido.toLowerCase().includes(termo) || j.nome?.toLowerCase().includes(termo))
+  }, [elenco, buscaJogador])
+
   return (
     <>
       <main className="page">
-        <p className="eyebrow">Passo 1 de 3</p>
-        <h1>{rachaId ? 'Editar pelada' : 'Nova pelada'}</h1>
+        {etapa === 1 ? (
+          <button type="button" className="voltar" onClick={() => nav('/')}>
+            <Icon name="esquerda" size={18} /> Início
+          </button>
+        ) : etapa === 2 ? (
+          <button type="button" className="voltar" onClick={() => setEtapa(1)}>
+            <Icon name="esquerda" size={18} /> Agendamento
+          </button>
+        ) : (
+          <button type="button" className="voltar" onClick={() => setEtapa(2)}>
+            <Icon name="esquerda" size={18} /> Regras
+          </button>
+        )}
 
-        <div className="form-2">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 2 }}>
           <div>
-            <label className="label" htmlFor="data">
-              Data
-            </label>
-            <div className="campo">
-              {dataValida ? diaHora(data) : 'Data inválida'}
+            <h1>{rachaId ? 'Editar pelada' : 'Nova pelada'}</h1>
+          </div>
+          {rachaId && (
+            <button className="link-btn" style={{ color: 'var(--danger)' }} onClick={() => setCancelando(true)}>
+              Excluir
+            </button>
+          )}
+        </div>
+
+        {/* Navegação de etapas limpa, sem números e claramente clicável */}
+        <nav className="etapas-nav" aria-label="Etapas da pelada">
+          <button type="button" className={`etapas-nav__btn${etapa === 1 ? ' on' : ''}`} onClick={() => setEtapa(1)}>
+            Agendamento
+          </button>
+          <button type="button" className={`etapas-nav__btn${etapa === 2 ? ' on' : ''}`} onClick={() => setEtapa(2)}>
+            Regras
+          </button>
+          <button type="button" className={`etapas-nav__btn${etapa === 3 ? ' on' : ''}`} onClick={() => setEtapa(3)}>
+            Presença
+          </button>
+        </nav>
+
+        {/* ETAPA 1: ONDE E QUANDO */}
+        {etapa === 1 && (
+          <section className="secao" style={{ marginTop: 0 }}>
+            <div>
+              <label className="label" htmlFor="local">
+                Nome da Arena / Local
+              </label>
               <input
-                id="data"
-                type="datetime-local"
-                value={data}
-                onChange={(e) => e.target.value && setData(e.target.value)}
-                // No desktop o clique não abre o calendário de um input invisível; abre explicitamente
-                onClick={(e) => {
-                  try {
-                    e.currentTarget.showPicker()
-                  } catch {
-                    /* navegador sem showPicker: segue o comportamento nativo */
-                  }
-                }}
+                id="local"
+                className="campo"
+                list="locais"
+                placeholder="Ex: Arena Soccer Club, Quadra 2..."
+                value={local}
+                onChange={(e) => setLocal(e.target.value)}
+                autoFocus
+              />
+              <datalist id="locais">{locais.map((l) => <option key={l} value={l} />)}</datalist>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <label className="label" htmlFor="data-dia">
+                Dia da pelada
+              </label>
+              <div className="campo">
+                {dataValida ? diaHora(data) : 'Data inválida'}
+                <input
+                  id="data-dia"
+                  type="datetime-local"
+                  value={data}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setData(e.target.value)
+                      setHoraInicio(extrairHora(e.target.value))
+                      setHoraFim(calcularHoraFim(extrairHora(e.target.value), duracaoRacha))
+                    }
+                  }}
+                  onClick={(e) => {
+                    try {
+                      e.currentTarget.showPicker()
+                    } catch {
+                      /* nativo */
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="form-2" style={{ marginTop: 14 }}>
+              <div>
+                <label className="label" htmlFor="hora-inicio">
+                  Horário de Início
+                </label>
+                <input
+                  id="hora-inicio"
+                  type="time"
+                  className="campo"
+                  value={horaInicio}
+                  onChange={(e) => aoMudarHoraInicio(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="hora-fim">
+                  Horário de Término
+                </label>
+                <input
+                  id="hora-fim"
+                  type="time"
+                  className="campo"
+                  value={horaFim}
+                  onChange={(e) => aoMudarHoraFim(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <span className="label">Duração total calculada</span>
+              <Stepper value={duracaoRacha} onChange={aoMudarDuracao} min={30} max={360} step={15} suffix="minutos" />
+              <p className="hint">
+                Das {horaInicio} às {horaFim} ({Math.floor(duracaoRacha / 60)}h{duracaoRacha % 60 ? ` ${duracaoRacha % 60}m` : ''} de quadra).
+              </p>
+            </div>
+          </section>
+        )}
+
+        {/* ETAPA 2: REGRAS E FORMATO */}
+        {etapa === 2 && (
+          <section className="secao" style={{ marginTop: 0 }}>
+            <span className="label">Formato das partidas</span>
+            <div className="segmented--texto">
+              <Segmented
+                label="Formato das partidas"
+                value={formato}
+                onChange={setFormato}
+                options={[
+                  { value: 'todos', label: 'Todos contra todos' },
+                  { value: 'vencedor_fica', label: 'Quem ganha fica' },
+                ]}
               />
             </div>
-          </div>
-          <div>
-            <label className="label" htmlFor="local">
-              Local
-            </label>
-            <input id="local" className="campo" list="locais" placeholder="Onde?" value={local} onChange={(e) => setLocal(e.target.value)} />
-            <datalist id="locais">{locais.map((l) => <option key={l} value={l} />)}</datalist>
-          </div>
-        </div>
-
-        <span className="label">Jogadores na linha</span>
-        <Segmented
-          label="Jogadores na linha"
-          value={Math.min(linha, 7)}
-          onChange={(v) => setLinha(v === 7 ? Math.max(7, linha) : v)}
-          options={[4, 5, 6, 7].map((v) => ({ value: v, label: v === 7 ? '7+' : v }))}
-        />
-        {linha >= 7 && <Stepper value={linha} onChange={setLinha} min={7} max={11} suffix="na linha" />}
-
-        <span className="label">Times</span>
-        <Segmented
-          label="Número de times"
-          value={Math.min(qtdTimes, 5)}
-          onChange={(v) => setQtdTimes(v === 5 ? Math.max(5, qtdTimes) : v)}
-          options={[2, 3, 4, 5].map((v) => ({ value: v, label: v === 5 ? '5+' : v }))}
-        />
-        {qtdTimes >= 5 && <Stepper value={qtdTimes} onChange={setQtdTimes} min={5} max={8} suffix="times" />}
-        <p className="hint">
-          Cada time: 1 goleiro + {linha} na linha = {linha + 1} jogadores.
-        </p>
-
-        <div className="form-2">
-          <div>
-            <span className="label">Duração da pelada</span>
-            <Stepper value={duracaoRacha} onChange={setDuracaoRacha} min={60} max={300} step={15} suffix="min" />
-          </div>
-          <div>
-            <span className="label">Cada partida</span>
-            <Stepper value={duracaoPartida} onChange={setDuracaoPartida} min={3} max={45} suffix="min" />
-          </div>
-        </div>
-
-        <span className="label">Formato das partidas</span>
-        <div className="segmented--texto">
-          <Segmented
-            label="Formato das partidas"
-            value={formato}
-            onChange={setFormato}
-            options={[
-              { value: 'todos', label: 'Todos contra todos' },
-              { value: 'vencedor_fica', label: 'Quem ganha fica' },
-            ]}
-          />
-        </div>
-        <p className="hint">
-          {vencedorFica
-            ? 'O vencedor continua e enfrenta o time de fora; quem perde vai para o fim da fila. No empate sai quem está há mais tempo em quadra.'
-            : 'Tabela pronta em que todos os times se enfrentam.'}
-        </p>
-
-        <span className="label">Partida acaba com</span>
-        <div className="segmented--texto">
-          <Segmented
-            label="Gols para encerrar a partida"
-            value={golsParaVencer}
-            onChange={setGolsParaVencer}
-            options={[0, 1, 2, 3, 4].map((v) => ({ value: v, label: v === 0 ? 'Só o tempo' : `${v} gol${v > 1 ? 's' : ''}` }))}
-          />
-        </div>
-        <p className="hint">
-          {golsParaVencer > 0
-            ? `${golsParaVencer} gol${golsParaVencer > 1 ? 's' : ''} ou ${duracaoPartida} minutos, o que vier primeiro.`
-            : `A partida dura ${duracaoPartida} minutos.`}
-        </p>
-
-        {!vencedorFica && (
-          <label className="toggle">
-            <span>
-              Ida e volta
-              <small>Cada confronto acontece duas vezes</small>
-            </span>
-            <input type="checkbox" checked={idaVolta} onChange={(e) => setIdaVolta(e.target.checked)} />
-          </label>
-        )}
-        <p className="hint">
-          {vencedorFica
-            ? `Cabem cerca de ${partidas} partida${partidas === 1 ? '' : 's'} de até ${duracaoPartida} min nos ${duracaoRacha} min da pelada.`
-            : `${partidas} ${partidas === 1 ? 'partida' : 'partidas'} × ${duracaoPartida} min = ${minutosDeJogo} min de bola rolando${minutosDeJogo > duracaoRacha ? ` — passa dos ${duracaoRacha} min da pelada.` : '.'}`}
-        </p>
-
-        <section className="secao">
-          <div className="secao__head">
-            <h2>Quem veio</h2>
-            <span>
-              <span style={{ fontFamily: 'var(--display)', fontWeight: 800, fontSize: 40, color: 'var(--accent-strong)' }}>{confirmados}</span>{' '}
-              <span className="eyebrow" style={{ display: 'inline' }}>
-                confirmados
-              </span>
-            </span>
-          </div>
-          <div className="barra barra--clara">
-            <span style={{ width: `${Math.min(100, (confirmados / vagas) * 100)}%` }} />
-          </div>
-          <div className="topo" style={{ alignItems: 'center' }}>
-            <p className="hint" style={{ margin: 0 }}>
-              {confirmados >= vagas
-                ? `Times completos: ${qtdTimes} de ${linha + 1}${confirmados > vagas ? ` · ${confirmados - vagas} reserva${confirmados - vagas > 1 ? 's' : ''}` : ''}.`
-                : `Faltam ${vagas - confirmados} para ${qtdTimes} times de ${linha + 1}.`}
-              {goleiros < qtdTimes && confirmados > 0 && ` ${qtdTimes - goleiros} time${qtdTimes - goleiros > 1 ? 's' : ''} sem goleiro fixo.`}
+            <p className="hint">
+              {vencedorFica
+                ? 'Quem ganha fica em quadra e enfrenta o próximo da fila. No empate, você decide facilmente quem entra!'
+                : 'Tabela corrida em que todos os times se enfrentam.'}
             </p>
-            <button
-              className="link-btn"
-              onClick={() => setPresentes(presentes.size === elenco.length ? new Set() : new Set(elenco.map((j) => j.id)))}
-            >
-              {presentes.size === elenco.length ? 'Limpar' : 'Todos'}
-            </button>
-          </div>
 
-          {elenco.length === 0 ? (
-            <Vazio titulo="Nenhum jogador cadastrado">
-              <Link className="link-btn" to="/jogadores/novo">
-                Adicionar jogador
-              </Link>
-            </Vazio>
-          ) : (
-            <ul className="lista" style={{ marginTop: 12 }}>
-              {elenco.map((j) => {
-                const on = presentes.has(j.id)
-                return (
-                  <li key={j.id}>
-                    <button className="item" onClick={() => alternar(j.id)} role="checkbox" aria-checked={on}>
-                      <Avatar jogador={j} />
-                      <div className="item__main">
-                        <div className="item__titulo">
-                          {j.apelido} {j.goleiro && <GolBadge />}
-                        </div>
-                        {j.nome && <div className="item__sub">{j.nome}</div>}
-                      </div>
-                      <Stars value={j.estrelas} />
-                      <span className={`check${on ? ' on' : ''}`}>
-                        <Icon name="check" size={22} strokeWidth={3} />
-                      </span>
+            <div className="form-2" style={{ marginTop: 14 }}>
+              <div>
+                <span className="label">Times</span>
+                <Stepper value={qtdTimes} onChange={setQtdTimes} min={2} max={8} suffix="times" />
+              </div>
+              <div>
+                <span className="label">Linha</span>
+                <Stepper value={linha} onChange={setLinha} min={3} max={11} suffix="na linha" />
+              </div>
+            </div>
+            <p className="hint">
+              Cada time terá 1 goleiro + {linha} na linha ({linha + 1} jogadores). Total de vagas: {vagas}.
+            </p>
+
+            <div className="form-2" style={{ marginTop: 14 }}>
+              <div>
+                <span className="label">Cada partida</span>
+                <Stepper value={duracaoPartida} onChange={setDuracaoPartida} min={3} max={45} suffix="min" />
+              </div>
+              <div>
+                <span className="label">Acaba com</span>
+                <div className="segmented" role="radiogroup" aria-label="Gols para encerrar">
+                  {[1, 2, 3].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      role="radio"
+                      aria-checked={golsParaVencer === v}
+                      className={golsParaVencer === v ? 'on' : ''}
+                      onClick={() => setGolsParaVencer(golsParaVencer === v ? 0 : v)}
+                    >
+                      {v}g
                     </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-          {rachaId && (
-            <div className="acoes">
-              <button className="btn btn--danger" onClick={() => setCancelando(true)}>
-                Cancelar pelada
+                  ))}
+                </div>
+              </div>
+            </div>
+            <p className="hint">
+              {golsParaVencer > 0
+                ? `${golsParaVencer} gol${golsParaVencer > 1 ? 's' : ''} ou ${duracaoPartida} min por jogo.`
+                : `Apenas tempo (${duracaoPartida} min corridos por jogo). Toque em um valor de gol para ativar limite.`}
+            </p>
+
+            {!vencedorFica && (
+              <label className="toggle" style={{ marginTop: 12 }}>
+                <span>
+                  Ida e volta
+                  <small>Cada confronto acontece duas vezes</small>
+                </span>
+                <input type="checkbox" checked={idaVolta} onChange={(e) => setIdaVolta(e.target.checked)} />
+              </label>
+            )}
+            <p className="hint">
+              {vencedorFica
+                ? `Estimativa: cabem cerca de ${partidas} partidas de até ${duracaoPartida} min nos ${duracaoRacha} min de bola rolando.`
+                : `${partidas} partidas × ${duracaoPartida} min = ${minutosDeJogo} min.`}
+            </p>
+          </section>
+        )}
+
+        {/* ETAPA 3: QUEM VEIO (PRESENÇA) */}
+        {etapa === 3 && (
+          <section className="secao" style={{ marginTop: 0 }}>
+            <div className="secao__head">
+              <h2>Quem veio</h2>
+              <span>
+                <span style={{ fontFamily: 'var(--display)', fontWeight: 800, fontSize: 36, color: 'var(--accent-strong)' }}>
+                  {confirmados}
+                </span>{' '}
+                <span className="eyebrow" style={{ display: 'inline' }}>
+                  / {vagas} vagas
+                </span>
+              </span>
+            </div>
+            <div className="barra barra--clara">
+              <span style={{ width: `${Math.min(100, (confirmados / vagas) * 100)}%` }} />
+            </div>
+            <div className="topo" style={{ alignItems: 'center', marginTop: 10 }}>
+              <p className="hint" style={{ margin: 0 }}>
+                {confirmados >= vagas
+                  ? `Times completos: ${qtdTimes} de ${linha + 1}${confirmados > vagas ? ` · ${confirmados - vagas} reserva${confirmados - vagas > 1 ? 's' : ''}` : ''}.`
+                  : `Faltam ${vagas - confirmados} para completar ${qtdTimes} times.`}
+                {goleiros < qtdTimes && confirmados > 0 && ` ${qtdTimes - goleiros} time${qtdTimes - goleiros > 1 ? 's' : ''} sem goleiro fixo.`}
+              </p>
+              <button
+                className="link-btn"
+                onClick={() => setPresentes(presentes.size === elenco.length ? new Set() : new Set(elenco.map((j) => j.id)))}
+              >
+                {presentes.size === elenco.length ? 'Limpar' : 'Todos'}
               </button>
             </div>
-          )}
-        </section>
+
+            <input
+              className="campo"
+              style={{ marginTop: 12, marginBottom: 8 }}
+              placeholder="Buscar jogador..."
+              value={buscaJogador}
+              onChange={(e) => setBuscaJogador(e.target.value)}
+            />
+
+            {elencoFiltrado.length === 0 ? (
+              <Vazio titulo={elenco.length === 0 ? 'Nenhum jogador cadastrado' : 'Nenhum jogador encontrado'}>
+                {elenco.length === 0 ? (
+                  <Link className="link-btn" to="/jogadores/novo">
+                    Adicionar jogador
+                  </Link>
+                ) : null}
+              </Vazio>
+            ) : (
+              <ul className="lista" style={{ marginTop: 8 }}>
+                {elencoFiltrado.map((j) => {
+                  const on = presentes.has(j.id)
+                  return (
+                    <li key={j.id}>
+                      <button className="item" onClick={() => alternar(j.id)} role="checkbox" aria-checked={on}>
+                        <Avatar jogador={j} />
+                        <div className="item__main">
+                          <div className="item__titulo">
+                            {j.apelido} {j.goleiro && <GolBadge />}
+                          </div>
+                          {j.nome && <div className="item__sub">{j.nome}</div>}
+                        </div>
+                        <Stars value={j.estrelas} />
+                        <span className={`check${on ? ' on' : ''}`}>
+                          <Icon name="check" size={22} strokeWidth={3} />
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </section>
+        )}
       </main>
+
+      {/* DOCK INFERIOR CONTEXTUAL POR ETAPA */}
       <Dock>
-        <button className="btn" disabled={!podeSeguir} onClick={seguir}>
-          <Icon name="sorteio" /> Ir para o sorteio
-        </button>
+        {etapa === 1 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
+            <button className="btn btn--outline" disabled={!podeSalvarBasico} onClick={() => salvarEProsseguir('home')}>
+              Salvar
+            </button>
+            <button className="btn" disabled={!podeSalvarBasico} onClick={() => setEtapa(2)}>
+              Regras <Icon name="direita" />
+            </button>
+          </div>
+        )}
+
+        {etapa === 2 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
+            <button className="btn btn--outline" disabled={!podeSalvarBasico} onClick={() => salvarEProsseguir('home')}>
+              Salvar
+            </button>
+            <button className="btn" disabled={!podeSalvarBasico} onClick={() => setEtapa(3)}>
+              Presença <Icon name="direita" />
+            </button>
+          </div>
+        )}
+
+        {etapa === 3 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
+            <button className="btn btn--outline" disabled={!podeSalvarBasico} onClick={() => salvarEProsseguir('home')}>
+              Salvar
+            </button>
+            <button className="btn" disabled={!podeIrSorteio} onClick={() => salvarEProsseguir('sorteio')}>
+              <Icon name="sorteio" /> Sortear
+            </button>
+          </div>
+        )}
       </Dock>
+
       <Confirmar
         aberto={cancelando}
         titulo="Cancelar esta pelada?"
